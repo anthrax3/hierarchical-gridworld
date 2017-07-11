@@ -1,9 +1,8 @@
 import pyparsing as pp
-from utils import unweave, areinstances, clear_screen, interleave
-from message import Message, Pointer, Channel, Referent, addressed_message, World
+from utils import unweave, areinstances, interleave
+from messages import Message, Pointer, Channel, Referent, addressed_message, World
 from world import move_person, move_gaze, look, empty_world
-from contextlib import closing
-import sqlite3
+import elicit
 
 class Env(object):
     def __init__(self, messages=(), actions=(), db=None):
@@ -51,42 +50,13 @@ class Env(object):
         return Env(messages=self.messages, actions=self.actions + (a,), db=self.db)
 
 
-def main(env=None):
-    if env is None:
-        env = Env((Message("[] is an empty world", World(empty_world(5, 5))),))
-    with closing(sqlite3.connect("memoize.db")) as conn:
-        env.db = conn.cursor()
-        run(env, use_cache=False)
-
 def run(env, use_cache=True):
     obs = env.get_obs()
     while True:
-        act = get_action(obs, env.db, use_cache=use_cache)
+        act = elicit.get_action(obs, env.db, use_cache=use_cache)
         obs, retval, env = env.step(act)
         if retval is not None:
             return retval, env
-
-def get_action(obs, db, use_cache=True):
-    act = get_cached_action(obs, db) if use_cache else None
-    if act is None:
-        clear_screen()
-        print(obs)
-        act = input("<<< ")
-        if use_cache: set_cached_action(obs, act, db)
-    return act
-
-def get_cached_action(obs, db):
-    db.execute("SELECT * FROM responses where input = ?", (obs,))
-    result = db.fetchone()
-    return None if result is None else result[1]
-
-def set_cached_action(obs, action, db):
-    db.execute("INSERT INTO responses VALUES (?, ?)", (obs, action))
-    db.connection.commit()
-
-def init_database(db):
-    db.execute("CREATE TABLE responses (input varchar, output varchar)")
-    db.connection.commit()
 
 #----commands
 
