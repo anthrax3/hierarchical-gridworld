@@ -1,4 +1,5 @@
 from utils import clear_screen
+import time
 
 class X(object):
     def __init__(self, x, y):
@@ -24,7 +25,7 @@ def update_tuple(t, i, f):
 def empty_world(x, y, start=X(0, 0)):
     grid = (((),) * y,) * x
     grid = add(grid, start, "agent")
-    return grid, start, start
+    return grid, start, start, None
 
 def render(xs):
     if len(xs) == 0:
@@ -33,9 +34,9 @@ def render(xs):
         return " and ".join(xs)
 
 def main():
-    grid, agent, gaze = empty_world(5, 5)
+    grid, agent, gaze, previous = empty_world(5, 5)
     grid = add(grid, X(2, 2), "wall")
-    world = grid, agent, gaze
+    world = grid, agent, gaze, previous
     message = ""
     while True:
         print_world(world)
@@ -58,7 +59,7 @@ def render_small(xs):
     return "."
 
 def world_repr(world):
-    grid, _, _ = world
+    grid, _, _, _ = world
     return "\n".join("".join(render_small(x) for x in r) for r in grid)
 
 def print_world(world):
@@ -91,27 +92,36 @@ def in_bounds(grid, cell):
 def move_person(world, diff):
     if isinstance(diff, str):
         diff = direction[diff]
-    grid, agent_xy, gaze_xy = world
+    grid, agent_xy, gaze_xy, previous = world
     target_xy = agent_xy + diff
     can_move = passable(grid, target_xy)
     if can_move:
         grid = add(grid, target_xy, "agent")
         grid = remove(grid, agent_xy, "agent")
-        return (grid, target_xy, gaze_xy), True
+        return (grid, target_xy, gaze_xy, world), True
     else:
         return world, False
 
 def move_gaze(world, diff):
     if isinstance(diff, str):
         diff = direction[diff]
-    grid, agent_xy, gaze_xy = world
+    grid, agent_xy, gaze_xy, previous = world
     target_xy = gaze_xy + diff
     can_move = in_bounds(grid, target_xy)
     if can_move:
-        return (grid, agent_xy, target_xy), True
+        return (grid, agent_xy, target_xy, previous), True
     else:
         return world, False
 
 def look(world):
-    grid, agent_xy, gaze_xy = world
+    grid, agent_xy, gaze_xy, previous = world
     return render(access(grid, gaze_xy))
+
+def display_history(world, fps=5):
+    history = []
+    while world is not None:
+        history.append(world)
+        world = world[3]
+    for world in reversed(history):
+        print_world(world)
+        time.sleep(1 / fps)
