@@ -5,11 +5,11 @@ import envs
 
 def debug(Q, A, db):
     debug_q = Message("is [] a correct response to []?", A, Q)
-    debug_a, debug_env = envs.ask_Q(debug_q, db)
+    debug_a, _ = envs.ask_Q(debug_q, db)
     if message_to_bool(debug_a, db):
         return False
     else:
-        return debug_env(debug_q.args[0].env)
+        return debug_env(A.args[0].env)
 
 def message_to_bool(m, db):
     if m.text == ("yes",):
