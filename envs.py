@@ -129,12 +129,12 @@ class MalformedCommand(Command):
 
 class Move(Command):
 
-    def __init__(self, world, direction):
+    def __init__(self, direction, world):
         self.world_pointer = world
         self.direction = direction
 
     def __str__(self):
-        return "move {} {}".format("move", self.world_pointer, self.direction)
+        return "move {} in {}".format(self.direction, self.world_pointer)
 
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
@@ -144,12 +144,12 @@ class Move(Command):
 
 class Gaze(Command):
 
-    def __init__(self, world, direction):
+    def __init__(self, direction, world):
         self.world_pointer = world
         self.direction = direction
 
     def __str__(self):
-        return "gaze {} {}".format("move", self.world_pointer, self.direction)
+        return "gaze {} in {}".format(self.direction, self.world_pointer)
 
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
@@ -163,7 +163,7 @@ class Look(Command):
         self.world_pointer = world
 
     def __str__(self):
-        return "look {}".format(self.world_pointer)
+        return "look in {}".format(self.world_pointer)
 
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
@@ -241,11 +241,11 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 view_command = raw("view") + pp.Empty() + message_referent
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-move_command = raw("move") + pp.Empty() + world_referent + options("left", "up", "right", "down")
+move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
 move_command.setParseAction(lambda xs : Move(xs[0], xs[1]))
-gaze_command = raw("gaze") + pp.Empty() + world_referent + options("left", "up", "right", "down")
+gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
 gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
-look_command = raw("look") + pp.Empty() + world_referent
+look_command = raw("look in") + pp.Empty() + world_referent
 look_command.setParseAction(lambda xs : Look(xs[0]))
 
 command = ask_command | reply_command | view_command | gaze_command | move_command | look_command | debug_command
