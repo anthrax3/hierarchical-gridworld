@@ -49,7 +49,10 @@ class Message(Referent):
         return self.format(["{}{}".format(arg.symbol, index) for arg, index in zip(self.args, indices)])
 
     def __str__(self):
-        return self.format(['({})'.format(arg) for arg in self.args])
+        def f(arg):
+            s = "({})" if arg.symbol == "#" else "{}"
+            return s.format(arg)
+        return self.format([f(arg) for arg in self.args])
 
     def __eq__(self, other):
         return self.text == other.text and self.args == other.args
@@ -107,7 +110,7 @@ class Pointer(Referent):
         return "{}->".format(self.type.symbol)
 
     def __str__(self):
-        return "{}{}".format(self.symbol, self.n)
+        return "{}{}".format(self.type.symbol, self.n)
 
 class World(Referent):
     """

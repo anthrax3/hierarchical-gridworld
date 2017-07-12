@@ -36,7 +36,7 @@ class Env(object):
 
     def step(self, act):
         command = parse_command(act)
-        new_env = self.add_action(act)
+        new_env = self.add_action(command)
         message, retval = command.execute(new_env)
         if message is not None:
             new_env = new_env.add_message(message)
@@ -71,6 +71,9 @@ class Ask(Command):
         self.message = message
         self.recipient_pointer = recipient
 
+    def __str__(self):
+        return "ask{} {}".format("" if self.recipient_pointer is None else self.recipient_pointer, self.message)
+
     def execute(self, env):
         message = addressed_message(self.message.instantiate(env.args), env, question=True)
         if self.recipient_pointer is None:
@@ -89,29 +92,40 @@ class View(Command):
     def execute(self, env):
         return self.message.instantiate(env.args), None
 
-class Return(Command):
+    def __str__(self):
+        return "view {}".format(self.message)
+
+
+class Reply(Command):
 
     def __init__(self, message):
         self.message = message
 
+    def __str__(self):
+        return "reply {}".format(self.message)
+
     def execute(self, env):
         return None, self.message.instantiate(env.args)
 
-class Reflect(Command):
-
-    def execute(self, env):
-        return Message("you are []", Channel(env)), None
-
 class MalformedCommand(Command):
 
+    def __init__(self, text):
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
     def execute(self, env):
-        return Message("the valid commands are 'reply', 'ask', 'reflect', 'view', and 'ask@N'"), None
+        return Message("that is not a valid command"), None
 
 class Move(Command):
 
     def __init__(self, world, direction):
         self.world_pointer = world
         self.direction = direction
+
+    def __str__(self):
+        return "move {} {}".format("move", self.world_pointer, self.direction)
 
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
@@ -125,6 +139,9 @@ class Gaze(Command):
         self.world_pointer = world
         self.direction = direction
 
+    def __str__(self):
+        return "gaze {} {}".format("move", self.world_pointer, self.direction)
+
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
         new_world, moved = move_gaze(world, self.direction)
@@ -135,6 +152,9 @@ class Look(Command):
 
     def __init__(self, world):
         self.world_pointer = world
+
+    def __str__(self):
+        return "look {}".format(self.world_pointer)
 
     def execute(self, env):
         world = self.world_pointer.instantiate(env.args).world
@@ -147,7 +167,7 @@ def parse_command(s):
     try:
         return command.parseString(s, parseAll=True)[0]
     except pp.ParseException:
-        return MalformedCommand()
+        return MalformedCommand(s)
 
 def parse_message(s):
     try:
@@ -191,16 +211,13 @@ target_modifier.setParseAction(lambda xs : ("recipient", Pointer(xs[0], type=Cha
 ask_modifiers = pp.ZeroOrMore(target_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 
-ask_command = (raw("ask")) + ask_modifiers + message
+ask_command = (raw("ask")) + ask_modifiers + pp.Empty() + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply") | raw("return")) + pp.Empty() + message
-reply_command.setParseAction(lambda xs : Return(xs[0]))
+reply_command = (raw("reply")) + pp.Empty() + message
+reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
-reflect_command = raw("reflect")
-reflect_command.setParseAction(lambda xs : Reflect())
-
-view_command = raw("view") + message
+view_command = raw("view") + pp.Empty() + message_referent
 view_command.setParseAction(lambda xs : View(xs[0]))
 
 move_command = raw("move") + pp.Empty() + world_referent + options("left", "up", "right", "down")
@@ -210,4 +227,4 @@ gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
 look_command = raw("look") + pp.Empty() + world_referent
 look_command.setParseAction(lambda xs : Look(xs[0]))
 
-command = ask_command | reply_command | reflect_command | view_command | gaze_command | move_command | look_command
+command = ask_command | reply_command | view_command | gaze_command | move_command | look_command
