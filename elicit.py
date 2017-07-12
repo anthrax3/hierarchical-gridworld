@@ -21,6 +21,10 @@ def get_action(obs, db, use_cache=True):
         if use_cache: set_cached_action(obs, act, db)
     return act
 
+def delete_cached_action(obs, db):
+    db.execute("DELETE FROM responses WHERE input = ?", (obs,))
+    db.connection.commit()
+
 def get_cached_action(obs, db):
     db.execute("SELECT * FROM responses where input = ?", (obs,))
     result = db.fetchone()

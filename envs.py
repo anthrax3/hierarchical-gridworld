@@ -3,6 +3,7 @@ from utils import unweave, areinstances, interleave
 from messages import Message, Pointer, Channel, Referent, addressed_message, World
 from world import move_person, move_gaze, look, empty_world
 import elicit
+import debug
 
 class Env(object):
     def __init__(self, messages=(), actions=(), db=None):
@@ -21,17 +22,22 @@ class Env(object):
             areinstances(self.messages, Message),
         )
 
-    def get_obs(self):
+    def get_obs(self, message_callback=None, action_callback=None):
+        if message_callback is None:
+            def message_callback(m, args):
+                return ">>> {}\n".format(m.format_with_indices(args))
+        if action_callback is None:
+            def action_callback(a):
+                return "<<< {}".format(a)
         last_arg = 0
         message_lines = []
         action_lines = []
         for m in self.messages:
             new_last_arg = last_arg + m.size
-            s = m.format_with_indices(range(last_arg, new_last_arg))
-            message_lines.append(">>> {}\n".format(s))
+            message_lines.append(message_callback(m, range(last_arg, new_last_arg)))
             last_arg = new_last_arg
         for a in self.actions:
-            action_lines.append("<<< {}".format(a))
+            action_lines.append(action_callback(a))
         return "\n".join(interleave(message_lines, action_lines))
 
     def step(self, act):
@@ -57,6 +63,9 @@ def run(env, use_cache=True):
         obs, retval, env = env.step(act)
         if retval is not None:
             return retval, env
+
+def ask_Q(Q, db):
+    return run(Env(messages=(Q,), db=db))
 
 #----commands
 
@@ -161,6 +170,15 @@ class Look(Command):
         result = look(world)
         return Message("you see {}".format(result)), None
 
+class Debug(Command):
+
+    def __str__(self):
+        return "debug"
+
+    def execute(self, env):
+        change = debug.debug_env(env)
+        return Message("behavior was changed" if change else "nothing was changed"), None
+
 #----parsing
 
 def parse_command(s):
@@ -214,6 +232,9 @@ ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 ask_command = (raw("ask")) + ask_modifiers + pp.Empty() + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
+debug_command = (raw('debug'))
+debug_command.setParseAction(lambda xs : Debug())
+
 reply_command = (raw("reply")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
@@ -227,4 +248,4 @@ gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
 look_command = raw("look") + pp.Empty() + world_referent
 look_command.setParseAction(lambda xs : Look(xs[0]))
 
-command = ask_command | reply_command | view_command | gaze_command | move_command | look_command
+command = ask_command | reply_command | view_command | gaze_command | move_command | look_command | debug_command
