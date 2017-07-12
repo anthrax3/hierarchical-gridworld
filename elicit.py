@@ -10,7 +10,7 @@ def main(env=None):
         env = envs.Env((messages.Message("[] is an empty world", messages.World(empty_world(5, 5))),))
     with closing(sqlite3.connect("memoize.db")) as conn:
         env.db = conn.cursor()
-        envs.run(env, use_cache=False)
+        return envs.run(env, use_cache=False)
 
 def get_action(obs, db, use_cache=True):
     act = get_cached_action(obs, db) if use_cache else None

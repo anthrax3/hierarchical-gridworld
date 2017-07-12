@@ -72,14 +72,14 @@ class Ask(Command):
         self.recipient_pointer = recipient
 
     def execute(self, env):
-        message = addressed_message(self.message.instantiate(env.args), env)
+        message = addressed_message(self.message.instantiate(env.args), env, question=True)
         if self.recipient_pointer is None:
             new_env = Env(db=env.db)
         else:
             new_env = self.recipient_pointer.instantiate(env.args).env
         new_env = new_env.add_message(message)
         response, new_env = run(new_env)
-        return addressed_message(response, new_env), None
+        return addressed_message(response, new_env, question=False), None
 
 class View(Command):
 
@@ -182,7 +182,8 @@ literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
     ).setParseAction(lambda xs : Message(tuple(unweave(xs)[0]), *unweave(xs)[1]))
-message << (message_referent ^ literal_message)
+#message << (message_referent ^ literal_message)
+message << literal_message
 
 target_modifier = raw("@")+number
 target_modifier.setParseAction(lambda xs : ("recipient", Pointer(xs[0], type=Channel)))
@@ -193,7 +194,7 @@ ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 ask_command = (raw("ask")) + ask_modifiers + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply") | raw("return")) + message
+reply_command = (raw("reply") | raw("return")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Return(xs[0]))
 
 reflect_command = raw("reflect")

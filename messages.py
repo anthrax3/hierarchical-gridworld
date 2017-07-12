@@ -76,8 +76,8 @@ class Channel(Referent):
     def instantiate(self, xs):
         raise Exception("should not try to instantiate a channel")
 
-def addressed_message(message, env):
-    return Message("[]: ", Channel(env)) + message
+def addressed_message(message, env, question=False):
+    return Message("{} from []: ".format("Q" if question else "A"), Channel(env)) + message
 
 class Pointer(Referent):
     """
