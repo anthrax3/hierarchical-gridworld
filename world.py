@@ -1,5 +1,6 @@
 from utils import clear_screen
 import time
+from random import random, randint
 
 class X(object):
     def __init__(self, x, y):
@@ -34,12 +35,15 @@ def render(xs):
         return " and ".join(xs)
 
 def default_world():
-    grid, agent, gaze, previous = empty_world(5, 5)
-    grid = add(grid, X(2, 3), "wall")
-    grid = add(grid, X(1, 3), "wall")
-    grid = add(grid, X(1, 2), "wall")
-    grid = add(grid, X(1, 1), "wall")
-    grid = add(grid, X(1, 0), "wall")
+    grid, agent, gaze, previous = empty_world(7, 7)
+    goalx, goaly = randint(1, 6), randint(1, 6)
+    grid = add(grid, X(goalx, goaly), "goal")
+    for i in range(7):
+        for j in range(7):
+            if (i != goalx or j != goaly) and (i > 1 or j > 1):
+                if random() < 0.25:
+                    grid = add(grid, X(i, j), "wall")
+
     return grid, agent, gaze, previous
 
 def main():
