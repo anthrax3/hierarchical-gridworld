@@ -5,31 +5,47 @@ import random
 
 color = termbox.DEFAULT
 
-def get_input(t, suggestions=[]):
+shortcut_bindings = [
+    ('a', termbox.KEY_CTRL_A),
+    ('s', termbox.KEY_CTRL_S),
+    ('d', termbox.KEY_CTRL_D),
+    ('f', termbox.KEY_CTRL_F),
+    ('t', termbox.KEY_CTRL_T),
+]
+
+def get_input(t, suggestions=[], shortcuts=[], prompt=None):
+    shortcut_dict = {}
+    for (c, k), template in zip(shortcut_bindings, shortcuts):
+        t.print_line("{}: {}".format(c, template))
+        shortcut_dict[k] = template
+    if shortcuts:
+        t.print_line("")
     for i, suggestion in reversed(list(enumerate(suggestions))):
-        t.print_line("{}. {}".format(i, suggestion), new_line=True)
+        t.print_line("{}. {}".format(i+1, suggestion))
     if suggestions:
-        t.print_line("", new_line=True)
-    t.print_line("<<< ", new_line=True)
-    return Input(t, t.x, t.y, suggestions=suggestions).elicit()
+        t.print_line("")
+    if prompt is not None: t.print_line(prompt)
+    return Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict).elicit()
 
 class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[]):
+    def __init__(self, t, x, y, suggestions=[], shortcuts={}):
         self.x = x
         self.y = y
         self.cursor = 0
         self.s = ""
         self.high_water = 0
         self.t = t
-        self.drafts = list(reversed(suggestions)) + [""]
-        self.current_draft = len(self.drafts) - 1
+        self.drafts = [""] + suggestions
+        self.current_draft = 0
+        self.shortcuts = shortcuts
 
     def move_to_draft(self, new_draft):
+        cursor_to_end = len(self.s) - self.cursor
         self.drafts[self.current_draft] = self.s
         self.s = self.drafts[new_draft]
         self.current_draft = new_draft
-        self.cursor = min(self.cursor, len(self.s))
+        self.cursor = max(0, len(self.s) - cursor_to_end)
         self.high_water = max(self.high_water, len(self.s))
 
     def refresh(self):
@@ -53,9 +69,7 @@ class Input(object):
 
     def poll(self):
         ch, key = self.t.poll()
-        if ch != None:
-            self.insert_ch(ch)
-        elif key in [termbox.KEY_BACKSPACE, termbox.KEY_BACKSPACE2] and self.cursor > 0:
+        if key in [termbox.KEY_BACKSPACE, termbox.KEY_BACKSPACE2] and self.cursor > 0:
             self.remove_ch()
         elif key == termbox.KEY_ARROW_LEFT and self.cursor > 0:
             self.cursor -= 1
@@ -64,15 +78,20 @@ class Input(object):
         elif key == termbox.KEY_ARROW_UP:
             if self.cursor > self.t.width:
                 self.cursor -= self.t.width
-            elif self.current_draft > 0:
-                self.move_to_draft(self.current_draft-1)
+            elif self.current_draft < len(self.drafts) - 1:
+                self.move_to_draft(self.current_draft+1)
         elif key == termbox.KEY_ARROW_DOWN:
             if self.cursor < len(self.s) - self.t.width:
                 self.cursor += self.t.width
-            elif self.current_draft < len(self.drafts) - 1:
-                self.move_to_draft(self.current_draft+1)
+            elif self.current_draft > 0:
+                self.move_to_draft(self.current_draft-1)
         elif key == termbox.KEY_ENTER:
             return self.s
+        elif key in self.shortcuts:
+            for c in self.shortcuts[key]:
+                self.insert_ch(c)
+        elif ch != None:
+            self.insert_ch(ch)
         self.refresh()
         return None
 
@@ -125,7 +144,7 @@ class Terminal(object):
             x, y = self.advance(x, y)
         return x, y
 
-    def print_line(self, line, new_line=False):
+    def print_line(self, line, new_line=True):
         if new_line: self.new_line()
         self.x, self.y = self.putchs(self.x, self.y, line)
 

@@ -1,15 +1,19 @@
 def areinstances(xs, t):
     return isinstance(xs, tuple) and all(isinstance(x, t) for x in xs)
 
-def interleave(xs, ys):
-    assert len(xs) == len(ys) + 1 or len(xs) == len(ys)
+def interleave(*xss):
     result = []
-    for x, y in zip(xs, ys):
-        result.append(x)
-        result.append(y)
-    if len(xs) > len(ys):
-        result.append(xs[-1])
-    return tuple(result)
+    xss = [list(xs) for xs in xss]
+    indices = [0 for xs in xss]
+    n = 0
+    while True:
+        if indices[n] >= len(xss[n]):
+            break
+        result.append(xss[n][indices[n]])
+        indices[n] += 1
+        n = (n + 1) % (len(xss))
+    assert all(i == len(xs) for i, xs in zip(indices, xss))
+    return result
 
 def unweave(xs):
     result = ([], [])

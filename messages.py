@@ -85,6 +85,24 @@ class Channel(Referent):
 def addressed_message(message, env, question=False):
     return Message("{} from []: ".format("Q" if question else "A"), Channel(env)) + message
 
+def is_addressed(message, req=["Q", "A"]):
+    if isinstance(req, str): req = [req]
+    temp = "{} from "
+    def check(t):
+        return t in [temp.format(r) for r in req]
+    return check(message.text[0])  and isinstance(message.args[0], Channel)
+
+def unaddressed_message(message):
+    new_text = (message.text[1][2:],) + message.text[2:]
+    return Message(new_text, *message.args[1:])
+
+def submessages(ref, include_root=True):
+    if isinstance(ref, Message):
+        if include_root:
+            yield ref
+        for arg in ref.args:
+            yield from submessages(arg)
+
 class Pointer(Referent):
     """
     A Pointer is an abstract variable,

@@ -22,10 +22,10 @@ class Env(object):
             areinstances(self.messages, Message),
         )
 
-    def get_obs(self, message_callback=None, action_callback=None):
+    def get_lines(self, message_callback=None, action_callback=None):
         if message_callback is None:
             def message_callback(m, args):
-                return ">>> {}\n".format(m.format_with_indices(args))
+                return ">>> {}".format(m.format_with_indices(args))
         if action_callback is None:
             def action_callback(a):
                 return "<<< {}".format(a)
@@ -38,7 +38,7 @@ class Env(object):
             last_arg = new_last_arg
         for a in self.actions:
             action_lines.append(action_callback(a))
-        return "\n".join(interleave(message_lines, action_lines))
+        return interleave(message_lines, ["" for _ in message_lines], action_lines)
 
     def step(self, act):
         command = parse_command(act)
@@ -51,8 +51,7 @@ class Env(object):
             message, retval = None, Message("stack overflow")
         if message is not None:
             new_env = new_env.add_message(message)
-        obs = new_env.get_obs()
-        return obs, retval, new_env
+        return retval, new_env
 
     def add_message(self, m):
         return Env(messages=self.messages + (m,), actions=self.actions, context=self.context)
@@ -62,10 +61,9 @@ class Env(object):
 
 
 def run(env, use_cache=True):
-    obs = env.get_obs()
     while True:
-        act = elicit.get_action(obs, env.context, use_cache=use_cache)
-        obs, retval, env = env.step(act)
+        act = elicit.get_action(env, use_cache=use_cache)
+        retval, env = env.step(act)
         if retval is not None:
             return retval, env
 
@@ -97,6 +95,28 @@ class Ask(Command):
         new_env = new_env.add_message(message)
         response, new_env = run(new_env)
         return addressed_message(response, new_env, question=False), None
+
+def starts_with(p, s):
+    return len(s) >= len(p) and s[:len(p)] == p
+
+#XXX this should get removed
+def get_messages_from_history_line(s):
+    if starts_with(">>> A", s):
+        v = s.find(":")
+        if v < 0:
+            return []
+        try:
+            return [message.parseString(s[v+1:], parseAll=True)[0]]
+        except (pp.ParseException, BadInstantiation):
+            return []
+    elif starts_with("<<< ", s):
+        try:
+            c = command.parseString(s[4:], parseAll=True)[0]
+            return get_messages_in(c)
+        except (pp.ParseException, BadInstantiation):
+            return []
+    else:
+        return []
 
 class View(Command):
 
@@ -183,6 +203,13 @@ class Fix(Command):
     def execute(self, env):
         change = debug.fix_env(env)
         return Message("behavior was changed" if change else "nothing was changed"), None
+
+def get_messages_in(c):
+    if isinstance(c, Reply) or isinstance(c, Ask):
+        return [c.message]
+    else:
+        return []
+
 
 #----parsing
 

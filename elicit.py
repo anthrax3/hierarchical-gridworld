@@ -1,6 +1,5 @@
 from world import default_world, display_history
 from contextlib import closing
-from utils import clear_screen
 import term
 import messages
 import envs
@@ -30,18 +29,36 @@ class Context(object):
         self.db.close()
         self.terminal.__exit__(*args)
 
-def get_action(obs, context, use_cache=True):
-    act = get_cached_action(obs, context) if use_cache else None
+#XXX this should get removed
+def templates_from_hints(hints, n=4):
+    result = []
+    for h in hints:
+        try:
+            command = envs.parse_command(h)
+            for message in envs.get_messages_in(command):
+                for m in messages.submessages(message, include_root=False):
+                    text = m.format(["()"] * m.size)
+                    if text not in result:
+                        result.append(text)
+        except messages.BadInstantiation:
+            pass
+    return result
+
+def get_action(env, use_cache=True, replace_old=False):
+    lines = env.get_lines()
+    obs = "\n".join(lines)
+    context = env.context
+    act = get_cached_action(obs, context) if (use_cache and not replace_old) else None
     if act is None:
-        #clear_screen()
-        #print(obs)
-        #act = input("<<< ")
         t = context.terminal
         t.clear()
-        for line in obs.split("\n"):
-            t.print_line(line, new_line=True)
-        hints = suggestions.best_dict_values(obs, context.cache) if use_cache else []
-        act = term.get_input(t, suggestions=hints)
+        for line in lines:
+            t.print_line(line)
+        if use_cache:
+            hints, shortcuts = suggestions.make_suggestions_and_shortcuts(env, obs, context.cache)
+        else:
+            hints, shortcuts = [], []
+        act = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt="<<< ")
         if use_cache: set_cached_action(obs, act, context)
     return act
 
