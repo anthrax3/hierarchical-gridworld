@@ -23,7 +23,7 @@ def fix_env(env):
     if env is None:
         return False
     if env is not None:
-        elicit.get_action(env, delete_old=True)
+        elicit.get_action(env, replace_old=True)
         return True
 
 def pick_command(prompt, env):
@@ -34,7 +34,7 @@ def pick_command(prompt, env):
     display_action.k = 0
     t = env.context.terminal
     t.clear()
-    lines = env.get_obs(action_callback=display_action).split("\n")
+    lines = env.get_lines(action_callback=display_action)
     for line in lines:
         t.print_line(line)
     done = False
