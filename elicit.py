@@ -5,6 +5,7 @@ import term
 import messages
 import envs
 import sqlite3
+import suggestions
 
 def main(env=None):
     if env is None:
@@ -22,6 +23,7 @@ class Context(object):
         self.db = sqlite3.connect("memoize.db")
         self.cursor = self.db.cursor()
         self.terminal.__enter__()
+        self.cache = load_cache(self)
         return self
 
     def __exit__(self, *args):
@@ -38,9 +40,9 @@ def get_action(obs, context, use_cache=True):
         t.clear()
         for line in obs.split("\n"):
             t.print_line(line, new_line=True)
-        t.print_line("<<< ", new_line=True)
-        act = term.LineIn(t, t.x, t.y).elicit()
-        if use_cache: set_cached_action(obs, act, db)
+        hints = suggestions.best_dict_values(obs, context.cache) if use_cache else []
+        act = term.get_input(t, suggestions=hints)
+        if use_cache: set_cached_action(obs, act, context)
     return act
 
 def delete_cached_action(obs, context):
@@ -48,11 +50,17 @@ def delete_cached_action(obs, context):
     context.db.commit()
 
 def get_cached_action(obs, context):
-    context.cursor.execute("SELECT * FROM responses where input = ?", (obs,))
-    result = context.cursor.fetchone()
-    return None if result is None else result[1]
+    if obs in context.cache:
+        return context.cache[obs]
+    else:
+        return None
+
+def load_cache(context):
+    context.cursor.execute("SELECT * FROM responses")
+    return {obs:act for obs, act in context.cursor}
 
 def set_cached_action(obs, action, context):
+    context.cache[obs] = action
     context.cursor.execute("INSERT INTO responses VALUES (?, ?)", (obs, action))
     context.db.commit()
 

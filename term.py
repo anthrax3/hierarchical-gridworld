@@ -5,15 +5,32 @@ import random
 
 color = termbox.DEFAULT
 
-class LineIn(object):
+def get_input(t, suggestions=[]):
+    for i, suggestion in reversed(list(enumerate(suggestions))):
+        t.print_line("{}. {}".format(i, suggestion), new_line=True)
+    if suggestions:
+        t.print_line("", new_line=True)
+    t.print_line("<<< ", new_line=True)
+    return Input(t, t.x, t.y, suggestions=suggestions).elicit()
 
-    def __init__(self, t, x, y):
+class Input(object):
+
+    def __init__(self, t, x, y, suggestions=[]):
         self.x = x
         self.y = y
         self.cursor = 0
         self.s = ""
         self.high_water = 0
         self.t = t
+        self.drafts = list(reversed(suggestions)) + [""]
+        self.current_draft = len(self.drafts) - 1
+
+    def move_to_draft(self, new_draft):
+        self.drafts[self.current_draft] = self.s
+        self.s = self.drafts[new_draft]
+        self.current_draft = new_draft
+        self.cursor = min(self.cursor, len(self.s))
+        self.high_water = max(self.high_water, len(self.s))
 
     def refresh(self):
         self.t.putchs(self.x, self.y, pad_to(self.high_water, self.s))
@@ -44,10 +61,16 @@ class LineIn(object):
             self.cursor -= 1
         elif key == termbox.KEY_ARROW_RIGHT and self.cursor < len(self.s):
             self.cursor += 1
-        elif key == termbox.KEY_ARROW_UP and self.cursor > self.t.width:
-            self.cursor -= self.t.width
-        elif key == termbox.KEY_ARROW_DOWN and self.cursor < len(self.s) - self.t.width:
-            self.cursor += self.t.width
+        elif key == termbox.KEY_ARROW_UP:
+            if self.cursor > self.t.width:
+                self.cursor -= self.t.width
+            elif self.current_draft > 0:
+                self.move_to_draft(self.current_draft-1)
+        elif key == termbox.KEY_ARROW_DOWN:
+            if self.cursor < len(self.s) - self.t.width:
+                self.cursor += self.t.width
+            elif self.current_draft < len(self.drafts) - 1:
+                self.move_to_draft(self.current_draft+1)
         elif key == termbox.KEY_ENTER:
             return self.s
         self.refresh()
@@ -112,13 +135,15 @@ class Terminal(object):
 
     def clear(self):
         self.t.clear()
+        self.x = 0
+        self.y = 0
 
     def refresh(self):
         self.t.present()
 
     def poll(self):
         type, ch, key, mod, w, h, x, y = self.t.poll_event()
-        if type == termbox.EVENT_KEY and key == termbox.KEY_ESC:
+        if type == termbox.EVENT_KEY and key == termbox.KEY_CTRL_C:
             raise KeyboardInterrupt()
         if key == 32:
             ch = " "
@@ -126,110 +151,3 @@ class Terminal(object):
 
     def set_cursor(self, x, y):
         self.t.set_cursor(x, y)
-
-if __name__ == "__main__":
-    with Terminal() as t:
-        t.clear()
-        t.set_cursor(5, 5)
-        t.refresh()
-        t.poll()
-        #l = LineIn(t, 0, 0)
-        #l.refresh()
-        #while True:
-        #    l.poll()
-
-
-#spaceord = ord(u" ")
-#
-#def print_line(t, msg, y, fg, bg):
-#	w = t.width()
-#	l = len(msg)
-#	x = 0
-#	for i in range(w):
-#		c = spaceord
-#		if i < l:
-#			c = ord(msg[i])
-#		t.change_cell(x+i, y, c, fg, bg)
-#
-#class SelectBox(object):
-#	def __init__(self, tb, choices, active=-1):
-#		self.tb = tb
-#		self.active = active
-#		self.choices = choices
-#		self.color_active = (termbox.BLACK, termbox.CYAN)
-#		self.color_normal = (termbox.WHITE, termbox.BLACK)
-#
-#	def draw(self):
-#		for i, c in enumerate(self.choices):
-#			color = self.color_normal
-#			if i == self.active:
-#				color = self.color_active
-#			print_line(self.tb, c, i, *color)
-#
-#	def validate_active(self):
-#		if self.active < 0:
-#			self.active = 0
-#		if self.active >= len(self.choices):
-#			self.active = len(self.choices)-1
-#
-#	def set_active(self, i):
-#		self.active = i
-#		self.validate_active()
-#
-#	def move_up(self):
-#		self.active -= 1
-#		self.validate_active()
-#
-#	def move_down(self):
-#		self.active += 1
-#		self.validate_active()
-#
-#choices = [
-#	u"This instructs Psyco",
-#	u"to compile and run as",
-#]
-#
-#def draw_bottom_line(t, i):
-#	i = i % 8
-#	w = t.width()
-#	h = t.height()
-#	c = i
-#	palette = [termbox.DEFAULT, termbox.BLACK, termbox.RED, termbox.GREEN,
-#	           termbox.YELLOW, termbox.BLUE, termbox.MAGENTA, termbox.CYAN,
-#	           termbox.WHITE]
-#	for x in range(w):
-#		t.change_cell(x, h-1, ord(u' '), termbox.BLACK, palette[c])
-#		t.change_cell(x, h-2, ord(u' '), termbox.BLACK, palette[c])
-#		c += 1
-#		if c > 7:
-#			c = 0
-#
-#with termbox.Termbox() as t:
-#	sb = SelectBox(t, choices, 0)
-#	t.clear()
-#	sb.draw()
-#	t.present()
-#	i = 0
-#	run_app = True
-#	while run_app:
-#		event_here = t.poll_event()
-#		while event_here:
-#			(type, ch, key, mod, w, h, x, y) = event_here
-#			if type == termbox.EVENT_KEY and key == termbox.KEY_ESC:
-#				run_app = False
-#			if type == termbox.EVENT_KEY:
-#				if key == termbox.KEY_ARROW_DOWN:
-#					sb.move_down()
-#				elif key == termbox.KEY_ARROW_UP:
-#					sb.move_up()
-#				elif key == termbox.KEY_HOME:
-#					sb.set_active(-1)
-#				elif key == termbox.KEY_END:
-#					sb.set_active(999)
-#			event_here = t.peek_event()
-#
-#		t.clear()
-#		sb.draw()
-#		draw_bottom_line(t, i)
-#		t.present()
-#		i += 1
