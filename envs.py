@@ -99,25 +99,6 @@ class Ask(Command):
 def starts_with(p, s):
     return len(s) >= len(p) and s[:len(p)] == p
 
-#XXX this should get removed
-def get_messages_from_history_line(s):
-    if starts_with(">>> A", s):
-        v = s.find(":")
-        if v < 0:
-            return []
-        try:
-            return [message.parseString(s[v+1:], parseAll=True)[0]]
-        except (pp.ParseException, BadInstantiation):
-            return []
-    elif starts_with("<<< ", s):
-        try:
-            c = command.parseString(s[4:], parseAll=True)[0]
-            return get_messages_in(c)
-        except (pp.ParseException, BadInstantiation):
-            return []
-    else:
-        return []
-
 class View(Command):
 
     def __init__(self, message):

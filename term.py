@@ -16,16 +16,19 @@ shortcut_bindings = [
 def get_input(t, suggestions=[], shortcuts=[], prompt=None):
     shortcut_dict = {}
     for (c, k), template in zip(shortcut_bindings, shortcuts):
-        t.print_line("{}: {}".format(c, template))
         shortcut_dict[k] = template
-    if shortcuts:
-        t.print_line("")
-    for i, suggestion in reversed(list(enumerate(suggestions))):
+    if prompt is not None: t.print_line(prompt)
+    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict)
+    if shortcuts or suggestions:
+        for i in range(3):
+            t.print_line("")
+    for i, suggestion in enumerate(suggestions):
         t.print_line("{}. {}".format(i+1, suggestion))
     if suggestions:
         t.print_line("")
-    if prompt is not None: t.print_line(prompt)
-    return Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict).elicit()
+    for (c, k), template in zip(shortcut_bindings, shortcuts):
+        t.print_line("{}: {}".format(c, template))
+    return inputter.elicit()
 
 class Input(object):
 
@@ -78,13 +81,13 @@ class Input(object):
         elif key == termbox.KEY_ARROW_UP:
             if self.cursor > self.t.width:
                 self.cursor -= self.t.width
-            elif self.current_draft < len(self.drafts) - 1:
-                self.move_to_draft(self.current_draft+1)
+            elif self.current_draft > 0:
+                self.move_to_draft(self.current_draft-1)
         elif key == termbox.KEY_ARROW_DOWN:
             if self.cursor < len(self.s) - self.t.width:
                 self.cursor += self.t.width
-            elif self.current_draft > 0:
-                self.move_to_draft(self.current_draft-1)
+            elif self.current_draft < len(self.drafts) - 1:
+                self.move_to_draft(self.current_draft+1)
         elif key == termbox.KEY_ENTER:
             return self.s
         elif key in self.shortcuts:

@@ -29,21 +29,6 @@ class Context(object):
         self.db.close()
         self.terminal.__exit__(*args)
 
-#XXX this should get removed
-def templates_from_hints(hints, n=4):
-    result = []
-    for h in hints:
-        try:
-            command = envs.parse_command(h)
-            for message in envs.get_messages_in(command):
-                for m in messages.submessages(message, include_root=False):
-                    text = m.format(["()"] * m.size)
-                    if text not in result:
-                        result.append(text)
-        except messages.BadInstantiation:
-            pass
-    return result
-
 def get_action(env, use_cache=True, replace_old=False):
     lines = env.get_lines()
     obs = "\n".join(lines)

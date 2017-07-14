@@ -26,14 +26,14 @@ def make_suggestions_and_shortcuts(env, obs, cache, num_suggestions=5, num_short
     shortcuts = []
     def add_shortcut(m):
         h = m.format(["()"] * m.size)
-        if useful_shortcut(h) and len(shortcuts) < num_shortcuts:
+        if useful_shortcut(h) and len(shortcuts) < num_shortcuts and h not in shortcuts:
             shortcuts.append(h)
     def useful_shortcut(h):
         return len(h) > 8
     for m in env.messages:
-        for h in messages.submessages(m, include_root=False):
-            add_shortcut(h)
-        if messages.is_addressed(m, "A"):
+        if not messages.is_addressed(m):
+            add_shortcut(m)
+        elif messages.is_addressed(m):
             add_shortcut(messages.unaddressed_message(m))
     for c in env.actions:
         for m in envs.get_messages_in(c):
@@ -41,7 +41,13 @@ def make_suggestions_and_shortcuts(env, obs, cache, num_suggestions=5, num_short
                 add_shortcut(h)
     def useful_suggestion(h):
         c = envs.parse_command(h)
-        return isinstance(c, envs.Reply) or isinstance(c, envs.Ask) and len(h) >= 10
+        for m in envs.get_messages_in(c):
+            try:
+                m.instantiate(env.args)
+            except messages.BadInstantiation:
+                return False
+        return (isinstance(c, envs.Reply) or isinstance(c, envs.Ask)
+                or isinstance(c, envs.Gaze) or isinstance(c, envs.Move)) and len(h) >= 10
     suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
     for h in suggestions:
         c = envs.parse_command(h)
