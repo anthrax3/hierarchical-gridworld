@@ -1,15 +1,15 @@
 import pyparsing as pp
 from utils import unweave, areinstances, interleave
-from messages import Message, Pointer, Channel, Referent, addressed_message, World
+from messages import Message, Pointer, Channel, Referent, addressed_message, World, BadInstantiation
 from world import move_person, move_gaze, look, empty_world
 import elicit
 import debug
 
 class Env(object):
-    def __init__(self, messages=(), actions=(), db=None):
+    def __init__(self, messages=(), actions=(), context=None):
         self.messages = messages
         self.actions = actions
-        self.db = db
+        self.context = context
         all_args = []
         for m in messages:
             all_args.extend(m.args)
@@ -43,29 +43,34 @@ class Env(object):
     def step(self, act):
         command = parse_command(act)
         new_env = self.add_action(command)
-        message, retval = command.execute(new_env)
+        try:
+            message, retval = command.execute(new_env)
+        except BadInstantiation:
+            message, retval = MalformedCommand(str(command)).execute(new_env)
+        except RecursionError:
+            message, retval = None, Message("stack overflow")
         if message is not None:
             new_env = new_env.add_message(message)
         obs = new_env.get_obs()
         return obs, retval, new_env
 
     def add_message(self, m):
-        return Env(messages=self.messages + (m,), actions=self.actions, db=self.db)
+        return Env(messages=self.messages + (m,), actions=self.actions, context=self.context)
 
     def add_action(self, a):
-        return Env(messages=self.messages, actions=self.actions + (a,), db=self.db)
+        return Env(messages=self.messages, actions=self.actions + (a,), context=self.context)
 
 
 def run(env, use_cache=True):
     obs = env.get_obs()
     while True:
-        act = elicit.get_action(obs, env.db, use_cache=use_cache)
+        act = elicit.get_action(obs, env.context, use_cache=use_cache)
         obs, retval, env = env.step(act)
         if retval is not None:
             return retval, env
 
-def ask_Q(Q, db):
-    return run(Env(messages=(Q,), db=db))
+def ask_Q(Q, context):
+    return run(Env(messages=(Q,), context=context))
 
 #----commands
 
@@ -86,7 +91,7 @@ class Ask(Command):
     def execute(self, env):
         message = addressed_message(self.message.instantiate(env.args), env, question=True)
         if self.recipient_pointer is None:
-            new_env = Env(db=env.db)
+            new_env = Env(context=env.context)
         else:
             new_env = self.recipient_pointer.instantiate(env.args).env
         new_env = new_env.add_message(message)
@@ -170,13 +175,13 @@ class Look(Command):
         result = look(world)
         return Message("you see {}".format(result)), None
 
-class Debug(Command):
+class Fix(Command):
 
     def __str__(self):
-        return "debug"
+        return "fix"
 
     def execute(self, env):
-        change = debug.debug_env(env)
+        change = debug.fix_env(env)
         return Message("behavior was changed" if change else "nothing was changed"), None
 
 #----parsing
@@ -184,13 +189,13 @@ class Debug(Command):
 def parse_command(s):
     try:
         return command.parseString(s, parseAll=True)[0]
-    except pp.ParseException:
+    except (pp.ParseException, BadInstantiation):
         return MalformedCommand(s)
 
 def parse_message(s):
     try:
         return message.parseString(s, parseAll=True)[0]
-    except pp.ParseException:
+    except (pp.ParseException, BadInstantiation):
         return Message("<<malformed message>>")
 
 def raw(s):
@@ -232,8 +237,8 @@ ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 ask_command = (raw("ask")) + ask_modifiers + pp.Empty() + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-debug_command = (raw('debug'))
-debug_command.setParseAction(lambda xs : Debug())
+fix_command = (raw('fix'))
+fix_command.setParseAction(lambda xs : Fix())
 
 reply_command = (raw("reply")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
@@ -248,4 +253,4 @@ gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
 look_command = raw("look in") + pp.Empty() + world_referent
 look_command.setParseAction(lambda xs : Look(xs[0]))
 
-command = ask_command | reply_command | view_command | gaze_command | move_command | look_command | debug_command
+command = ask_command | reply_command | view_command | gaze_command | move_command | look_command | fix_command

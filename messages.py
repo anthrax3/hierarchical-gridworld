@@ -12,6 +12,9 @@ class Referent(object):
     def instantiate(self, xs):
         raise NotImplemented()
 
+class BadInstantiation(Exception):
+    pass
+
 class Message(Referent):
     """
     A Message consists of text interspersed with Referents
@@ -92,7 +95,6 @@ class Pointer(Referent):
     def __init__(self, n, type=Referent):
         self.n = n
         self.type = type
-        #assert self.well_formed()
 
     def well_formed(self):
         return (
@@ -101,8 +103,10 @@ class Pointer(Referent):
         )
 
     def instantiate(self, xs):
+        if self.n >= len(xs) or self.n < 0:
+            raise BadInstantiation()
         x = xs[self.n]
-        assert isinstance(x, self.type)
+        if not isinstance(x, self.type): raise BadInstantiation()
         return x
 
     @property

@@ -33,10 +33,17 @@ def render(xs):
     else:
         return " and ".join(xs)
 
-def main():
+def default_world():
     grid, agent, gaze, previous = empty_world(5, 5)
-    grid = add(grid, X(2, 2), "wall")
-    world = grid, agent, gaze, previous
+    grid = add(grid, X(2, 3), "wall")
+    grid = add(grid, X(1, 3), "wall")
+    grid = add(grid, X(1, 2), "wall")
+    grid = add(grid, X(1, 1), "wall")
+    grid = add(grid, X(1, 0), "wall")
+    return grid, agent, gaze, previous
+
+def main():
+    world = default_world()
     message = ""
     while True:
         print_world(world)

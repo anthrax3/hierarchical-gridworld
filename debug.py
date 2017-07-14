@@ -3,13 +3,10 @@ import utils
 import elicit
 import envs
 
-def debug(Q, A, db):
-    debug_q = Message("is [] a correct response to []?", A, Q)
+def sanity_check(Q, A, db):
+    debug_q = Message("does [] pass a basic sanity check as a response to []?", A, Q)
     debug_a, _ = envs.ask_Q(debug_q, db)
-    if message_to_bool(debug_a, db):
-        return False
-    else:
-        return debug_env(A.args[0].env)
+    return message_to_bool(debug_a, db)
 
 def message_to_bool(m, db):
     if m.text == ("yes",):
@@ -20,23 +17,14 @@ def message_to_bool(m, db):
         new_m, _ = envs.ask_Q(Message("does [] represent yes? please answer with 'yes' or 'no'", m), db)
         return message_to_bool(new_m, db)
 
-def debug_env(env):
-    bug_found = False
-    for i in range(len(env.actions)):
-        if isinstance(env.actions[i], envs.Ask):
-            Q = env.actions[i].message.instantiate(env.args)
-            A = env.messages[i+1]
-            bug_found = bug_found or debug(Q, A, env.db)
-    if bug_found:
+def fix_env(env):
+    obs = pick_command("which of these commands do you want to change?", env)
+    if obs is None:
+        return False
+    if obs is not None:
+        elicit.delete_cached_action(obs, env.db)
+        elicit.get_action(obs, env.db)
         return True
-    else:
-        obs = pick_command("which of these commands is inappropriate?", env)
-        if obs is None:
-            return False
-        if obs is not None:
-            elicit.delete_cached_action(obs, env.db)
-            elicit.get_action(obs, env.db)
-            return True
 
 def pick_command(prompt, env):
     def display_action(a):
