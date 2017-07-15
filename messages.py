@@ -30,6 +30,10 @@ class Message(Referent):
         self.args = args 
         assert self.well_formed()
 
+    def matches(self, text):
+        target = tuple(text.split("[]"))
+        return target == self.text
+
     def well_formed(self):
         return (
             areinstances(self.text, six.string_types) and
@@ -65,6 +69,20 @@ class Message(Referent):
 
     def instantiate(self, xs):
         return Message(self.text, *[arg.instantiate(xs) for arg in self.args])
+
+class WorldMessage(Message):
+
+    def __init__(self, world):
+        self.world = world
+        self.args = ()
+        self.text = ("the state of a gridworld",)
+
+class CellMessage(Message):
+
+    def __init__(self, cell):
+        self.cell = cell
+        self.args = ()
+        self.text = ("a cell in a gridworld",)
 
 class Channel(Referent):
     """
@@ -134,18 +152,18 @@ class Pointer(Referent):
     def __str__(self):
         return "{}{}".format(self.type.symbol, self.n)
 
-class World(Referent):
-    """
-    A World refers to a state of gridworld
-    """
-
-    symbol = "$"
-
-    def __init__(self, world):
-        self.world = world
-
-    def instantiate(self, xs):
-        raise Exception("should not instantiate a World")
-
-    def well_formed(self):
-        return True
+#class World(Referent):
+#    """
+#    A World refers to a state of gridworld
+#    """
+#
+#    symbol = "$"
+#
+#    def __init__(self, world):
+#        self.world = world
+#
+#    def instantiate(self, xs):
+#        raise Exception("should not instantiate a World")
+#
+#    def well_formed(self):
+#        return True

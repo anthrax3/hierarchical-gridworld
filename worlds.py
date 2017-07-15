@@ -2,6 +2,8 @@ from utils import clear_screen
 import time
 from random import random, randint
 
+width = height = 7
+
 class X(object):
     def __init__(self, x, y):
         self.x = x
@@ -9,6 +11,20 @@ class X(object):
 
     def __add__(self, other):
         return X(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        return X(self.x - other.x, self.y - other.y)
+
+    def in_direction(self, direction):
+        dx, dy = directions[direction]
+        return dx * self.x > 0 or dy * self.y > 0
+
+    def move(self, direction):
+        result = self + directions[direction]
+        return result, result.is_valid()
+
+    def is_valid(self):
+        return self.x >= 0 and self.y >= 0 and self.x < height and self.y < width
 
     def __iter__(self):
         yield self.x
@@ -23,28 +39,36 @@ def update(grid, cell, f):
 def update_tuple(t, i, f):
     return t[:i] + (f(t[i]),) + t[i+1:]
 
-def empty_world(x, y, start=X(0, 0)):
-    grid = (((),) * y,) * x
-    grid = add(grid, start, "agent")
-    return grid, start, start, None
+def empty_grid():
+    return (((),) * width,) * height
+
+def articulate(s):
+    if s[0] in "aeiou":
+        return "an {}".format(s)
+    else:
+        return "a {}".format(s)
 
 def render(xs):
+    if xs is None:
+        return "out of bounds"
     if len(xs) == 0:
         return "empty"
     else:
-        return " and ".join(xs)
+        return " and ".join(articulate(x) for x in xs)
 
 def default_world():
-    grid, agent, gaze, previous = empty_world(7, 7)
-    goalx, goaly = randint(1, 6), randint(1, 6)
+    grid = empty_grid()
+    goalx, goaly = randint(1, height-1), randint(1, width-1)
+    agentx, agenty = randint(1, height-1), randint(1, width-1)
+    grid = add(grid, X(agentx, agenty), "agent")
     grid = add(grid, X(goalx, goaly), "goal")
-    for i in range(7):
-        for j in range(7):
-            if (i != goalx or j != goaly) and (i > 1 or j > 1):
+    for i in range(height):
+        for j in range(width):
+            if ((i != goalx or j != goaly) and (i != agentx or j != agenty)
+                    and (i > 1 or j > 1)):
                 if random() < 0.25:
                     grid = add(grid, X(i, j), "wall")
-
-    return grid, agent, gaze, previous
+    return grid, X(agentx, agenty), None
 
 def main():
     world = default_world()
@@ -70,7 +94,7 @@ def render_small(xs):
     return "."
 
 def world_repr(world):
-    grid, _, _, _ = world
+    grid, _, _ = world
     return "\n".join("".join(render_small(x) for x in r) for r in grid)
 
 def print_world(world):
@@ -87,10 +111,13 @@ def add(grid, cell, x):
     return update(grid, cell, lambda xs : xs + (x,))
 
 obstructs = {"agent":True, "wall":True, "goal":False}
-direction = {"up":X(-1, 0), "down":X(1, 0), "left":X(0, -1), "right":X(0, 1)}
+directions = {"north":X(-1, 0), "south":X(1, 0), "west":X(0, -1), "east":X(0, 1)}
 
 def access(grid, cell):
-    return grid[cell.x][cell.y]
+    if cell.is_valid():
+        return grid[cell.x][cell.y]
+    else:
+        return None
 
 def passable(grid, cell):
     return in_bounds(grid, cell) and not any(obstructs[x] for x in access(grid, cell))
@@ -102,31 +129,20 @@ def in_bounds(grid, cell):
 
 def move_person(world, diff):
     if isinstance(diff, str):
-        diff = direction[diff]
-    grid, agent_xy, gaze_xy, previous = world
+        diff = directions[diff]
+    grid, agent_xy, previous = world
     target_xy = agent_xy + diff
     can_move = passable(grid, target_xy)
     if can_move:
         grid = add(grid, target_xy, "agent")
         grid = remove(grid, agent_xy, "agent")
-        return (grid, target_xy, gaze_xy, world), True
+        return (grid, target_xy, world), True
     else:
         return world, False
 
-def move_gaze(world, diff):
-    if isinstance(diff, str):
-        diff = direction[diff]
-    grid, agent_xy, gaze_xy, previous = world
-    target_xy = gaze_xy + diff
-    can_move = in_bounds(grid, target_xy)
-    if can_move:
-        return (grid, agent_xy, target_xy, previous), True
-    else:
-        return world, False
-
-def look(world):
-    grid, agent_xy, gaze_xy, previous = world
-    return render(access(grid, gaze_xy))
+def look(world, cell):
+    grid, agent_xy, previous = world
+    return render(access(grid, cell))
 
 def display_history(world, fps=5):
     history = []

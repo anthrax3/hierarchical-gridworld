@@ -1,17 +1,19 @@
-from world import default_world, display_history
+from worlds import default_world, display_history
+import worlds
 from contextlib import closing
 import term
 import messages
 import envs
 import sqlite3
 import suggestions
+import IPython
 
 def main(env=None):
     if env is None:
-        env = envs.Env((messages.Message("[] is a world", messages.World(default_world())),))
+        env = envs.Env((messages.Message("[] is a world", messages.WorldMessage(default_world())),))
     with Context() as context:
         env.context = context
-        envs.run(env, use_cache=False)
+        return envs.run(env, use_cache=False)
 
 class Context(object):
 
@@ -82,3 +84,4 @@ def get_database_size():
 
 if __name__ == "__main__":
     message, environment = main()
+    IPython.embed()

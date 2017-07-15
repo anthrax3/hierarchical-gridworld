@@ -1,7 +1,8 @@
 import pyparsing as pp
 from utils import unweave, areinstances, interleave
-from messages import Message, Pointer, Channel, Referent, addressed_message, World, BadInstantiation
-from world import move_person, move_gaze, look, empty_world
+from messages import Message, Pointer, Channel, Referent, addressed_message, BadInstantiation
+import messages
+import worlds
 import elicit
 import debug
 
@@ -67,8 +68,55 @@ def run(env, use_cache=True):
         if retval is not None:
             return retval, env
 
-def ask_Q(Q, context):
-    return run(Env(messages=(Q,), context=context))
+def ask_Q(Q, context, sender=None):
+    builtin_result = builtin_handler(Q)
+    if builtin_result is not None:
+        env = Env(messages=(Q,), context=context).add_action(Automatic())
+        return builtin_result, env
+    if sender is not None:
+        Q = messages.addressed_message(Q, sender, question=True)
+    env = Env(messages=(Q,), context=context)
+    return run(env)
+
+def builtin_handler(Q):
+    if (Q.matches("what cell contains the agent in world []?")
+            and isinstance(Q.args[0], messages.WorldMessage)):
+        grid, agent, history = Q.args[0].world
+        return Message("the agent is in cell []", messages.CellMessage(agent))
+    if (Q.matches("what is in cell [] in world []?")
+            and isinstance(Q.args[0], messages.CellMessage)
+            and isinstance(Q.args[1], messages.WorldMessage)):
+        cell = Q.args[0].cell
+        world = Q.args[1].world
+        return Message("it contains []", Message(worlds.look(world, cell)))
+    for direction in worlds.directions:
+        if (Q.matches("is cell [] {} of cell []?".format(direction))
+                and isinstance(Q.args[0], messages.CellMessage)
+                and isinstance(Q.args[1], messages.CellMessage)):
+            a = Q.args[0].cell
+            b = Q.args[1].cell
+            if (a - b).in_direction(direction):
+                return Message("yes")
+            else:
+                return Message("no")
+        if (Q.matches("move the agent {} in world []".format(direction))
+                and isinstance(Q.args[0], messages.WorldMessage)):
+            world = Q.args[0].world
+            new_world, moved = worlds.move_person(world, direction)
+            if moved:
+                return Message("the resulting world is []", messages.WorldMessage(new_world))
+            else:
+                return Message("it can't move that direction")
+        if (Q.matches("what cell is directly {} of cell []?".format(direction))
+                and isinstance(Q.args[0], messages.CellMessage)):
+            cell = Q.args[0].cell
+            new_cell, moved = cell.move(direction)
+            if moved:
+                return Message("the cell []", messages.CellMessage(new_cell))
+            else:
+                return Message("there is no cell there")
+
+    return None
 
 #----commands
 
@@ -76,6 +124,17 @@ class Command(object):
 
     def execute(self, env):
         raise NotImplemented()
+
+class Automatic(Command):
+
+    def __init__(self):
+        pass
+
+    def execute(self, env):
+        raise Exception("Can't implement automatic command")
+
+    def __str__(self):
+        return "<<produced by built-in function>>"
 
 class Ask(Command):
 
@@ -87,13 +146,14 @@ class Ask(Command):
         return "ask{} {}".format("" if self.recipient_pointer is None else self.recipient_pointer, self.message)
 
     def execute(self, env):
-        message = addressed_message(self.message.instantiate(env.args), env, question=True)
-        if self.recipient_pointer is None:
-            new_env = Env(context=env.context)
-        else:
+        if self.recipient_pointer is not None:
+            message = addressed_message(self.message.instantiate(env.args), env, question=True)
             new_env = self.recipient_pointer.instantiate(env.args).env
-        new_env = new_env.add_message(message)
-        response, new_env = run(new_env)
+            new_env = new_env.add_message(message)
+            response, new_env = run(new_env)
+        else:
+            message = self.message.instantiate(env.args)
+            response, new_env = ask_Q(message, sender=env, context=env.context)
         return addressed_message(response, new_env, question=False), None
 
 def starts_with(p, s):
@@ -133,48 +193,48 @@ class MalformedCommand(Command):
     def execute(self, env):
         return Message("that is not a valid command"), None
 
-class Move(Command):
-
-    def __init__(self, direction, world):
-        self.world_pointer = world
-        self.direction = direction
-
-    def __str__(self):
-        return "move {} in {}".format(self.direction, self.world_pointer)
-
-    def execute(self, env):
-        world = self.world_pointer.instantiate(env.args).world
-        new_world, moved = move_person(world, self.direction)
-        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
-        return result, None
-
-class Gaze(Command):
-
-    def __init__(self, direction, world):
-        self.world_pointer = world
-        self.direction = direction
-
-    def __str__(self):
-        return "gaze {} in {}".format(self.direction, self.world_pointer)
-
-    def execute(self, env):
-        world = self.world_pointer.instantiate(env.args).world
-        new_world, moved = move_gaze(world, self.direction)
-        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
-        return result, None
-
-class Look(Command):
-
-    def __init__(self, world):
-        self.world_pointer = world
-
-    def __str__(self):
-        return "look in {}".format(self.world_pointer)
-
-    def execute(self, env):
-        world = self.world_pointer.instantiate(env.args).world
-        result = look(world)
-        return Message("you see {}".format(result)), None
+#class Move(Command):
+#
+#    def __init__(self, direction, world):
+#        self.world_pointer = world
+#        self.direction = direction
+#
+#    def __str__(self):
+#        return "move {} in {}".format(self.direction, self.world_pointer)
+#
+#    def execute(self, env):
+#        world = self.world_pointer.instantiate(env.args).world
+#        new_world, moved = move_person(world, self.direction)
+#        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
+#        return result, None
+#
+#class Gaze(Command):
+#
+#    def __init__(self, direction, world):
+#        self.world_pointer = world
+#        self.direction = direction
+#
+#    def __str__(self):
+#        return "gaze {} in {}".format(self.direction, self.world_pointer)
+#
+#    def execute(self, env):
+#        world = self.world_pointer.instantiate(env.args).world
+#        new_world, moved = move_gaze(world, self.direction)
+#        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
+#        return result, None
+#
+#class Look(Command):
+#
+#    def __init__(self, world):
+#        self.world_pointer = world
+#
+#    def __str__(self):
+#        return "look in {}".format(self.world_pointer)
+#
+#    def execute(self, env):
+#        world = self.world_pointer.instantiate(env.args).world
+#        result = look(world)
+#        return Message("you see {}".format(result)), None
 
 class Fix(Command):
 
@@ -223,12 +283,12 @@ agent_referent.setParseAction(lambda x : Pointer(x[0], Channel))
 message_referent = (raw("#") + number).leaveWhitespace()
 message_referent.setParseAction(lambda x : Pointer(x[0], Message))
 
-world_referent = (raw("$") + number).leaveWhitespace()
-world_referent.setParseAction(lambda xs : Pointer(xs[0], World))
-
+#world_referent = (raw("$") + number).leaveWhitespace()
+#world_referent.setParseAction(lambda xs : Pointer(xs[0], World))
+#
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
-argument = submessage | agent_referent | message_referent | world_referent
+argument = submessage | agent_referent | message_referent #| world_referent
 literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
@@ -254,11 +314,11 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 view_command = raw("view") + pp.Empty() + message_referent
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
-move_command.setParseAction(lambda xs : Move(xs[0], xs[1]))
-gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
-gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
-look_command = raw("look in") + pp.Empty() + world_referent
-look_command.setParseAction(lambda xs : Look(xs[0]))
+#move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
+#move_command.setParseAction(lambda xs : Move(xs[0], xs[1]))
+#gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
+#gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
+#look_command = raw("look in") + pp.Empty() + world_referent
+#look_command.setParseAction(lambda xs : Look(xs[0]))
 
-command = ask_command | reply_command | view_command | gaze_command | move_command | look_command | fix_command
+command = ask_command | reply_command | view_command | fix_command # | gaze_command | move_command | look_command
