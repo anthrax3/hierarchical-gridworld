@@ -2,7 +2,7 @@ from utils import clear_screen
 import time
 from random import random, randint
 
-width = height = 7
+width = height = 11
 
 class X(object):
     def __init__(self, x, y):
@@ -148,7 +148,7 @@ def display_history(world, fps=5):
     history = []
     while world is not None:
         history.append(world)
-        world = world[3]
+        world = world[2]
     for world in reversed(history):
         print_world(world)
         time.sleep(1 / fps)
