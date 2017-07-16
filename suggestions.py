@@ -46,7 +46,7 @@ def make_suggestions_and_shortcuts(env, obs, cache, num_suggestions=5, num_short
                 m.instantiate(env.args)
             except messages.BadInstantiation:
                 return False
-        return (isinstance(c, envs.Reply) or isinstance(c, envs.Ask)) and len(h) >= 8
+        return (isinstance(c, envs.Reply) or isinstance(c, envs.Ask) or isinstance(c, envs.View))
     suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
     for h in suggestions:
         c = envs.parse_command(h)
