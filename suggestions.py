@@ -128,8 +128,9 @@ def get_database_size():
         c = conn.cursor()
         from collections import Counter
         results = Counter()
-        for table in c.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-            table = table[0]
+        tables = [t[0] for t in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        for table in tables:
+            print(table)
             for _ in c.execute("SELECT * FROM {}".format(table)):
-                results[table] += 1
+                results[table[0]] += 1
         return results
