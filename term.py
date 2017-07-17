@@ -13,12 +13,12 @@ shortcut_bindings = [
     ('t', termbox.KEY_CTRL_T),
 ]
 
-def get_input(t, suggestions=[], shortcuts=[], prompt=None):
+def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
     shortcut_dict = {}
     for (c, k), template in zip(shortcut_bindings, shortcuts):
         shortcut_dict[k] = template
     if prompt is not None: t.print_line(prompt)
-    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict)
+    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict, **kwargs)
     if shortcuts or suggestions:
         for i in range(3):
             t.print_line("")
@@ -32,14 +32,14 @@ def get_input(t, suggestions=[], shortcuts=[], prompt=None):
 
 class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[], shortcuts={}):
+    def __init__(self, t, x, y, suggestions=[], shortcuts={}, default=""):
         self.x = x
         self.y = y
-        self.cursor = 0
-        self.s = ""
-        self.high_water = 0
+        self.s = default
+        self.cursor = len(self.s)
+        self.high_water = len(self.s)
         self.t = t
-        self.drafts = [""] + suggestions
+        self.drafts = [None] + suggestions
         self.current_draft = 0
         self.shortcuts = shortcuts
 

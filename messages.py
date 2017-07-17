@@ -104,16 +104,14 @@ class Channel(Referent):
 def addressed_message(message, implementer, translator, question=False):
     return Message("{} from []: ".format("Q" if question else "A"), Channel(implementer=implementer, translator=translator)) + message
 
-def is_addressed(message, req=["Q", "A"]):
-    if isinstance(req, str): req = [req]
-    temp = "{} from "
-    def check(t):
-        return t in [temp.format(r) for r in req]
-    return check(message.text[0])  and isinstance(message.args[0], Channel)
-
-def unaddressed_message(message):
-    new_text = (message.text[1][2:],) + message.text[2:]
-    return Message(new_text, *message.args[1:])
+def strip_prefix(message, sep=": "):
+    for i, t in enumerate(message.text):
+        if sep in t:
+            new_args = message.args[i:]
+            new_t = sep.join(t.split(sep)[1:])
+            new_text = (new_t,) + message.text[i+1:]
+            return Message(new_text, *new_args)
+    return message
 
 def submessages(ref, include_root=True):
     if isinstance(ref, Message):

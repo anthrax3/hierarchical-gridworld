@@ -88,7 +88,7 @@ class Translator(Env):
         translator = self.add_says(m)
         message = None
         while True:
-            s = elicit.get_action(translator, error_message=message, prompt=self.get_prompt())
+            s = elicit.get_response(translator, error_message=message, prompt=self.get_prompt(), kind="translate")
             viewer = parse_view(s)
             translation = parse_message(s)
             if viewer is not None:
@@ -133,7 +133,7 @@ class Implementer(Env):
 def run(env, use_cache=True):
     message = None
     while True:
-        act = elicit.get_action(env, use_cache=use_cache, error_message=message)
+        act = elicit.get_response(env, use_cache=use_cache, error_message=message, kind="implement")
         try:
             retval, env = env.step(act)
             message = None

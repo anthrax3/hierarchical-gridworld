@@ -1,10 +1,8 @@
 from worlds import default_world, display_history
 import worlds
-from contextlib import closing
 import term
 import messages
 import envs
-import sqlite3
 import suggestions
 import IPython
 
@@ -23,72 +21,41 @@ class Context(object):
         self.terminal = term.Terminal()
 
     def __enter__(self):
-        self.db = sqlite3.connect("memoize.db")
-        self.cursor = self.db.cursor()
+        self.suggesters = {"implement":suggestions.ImplementSuggester(), "translate":suggestions.TranslateSuggester()}
         self.terminal.__enter__()
-        self.cache = load_cache(self)
         return self
 
     def __exit__(self, *args):
-        self.db.close()
+        for v in self.suggesters.values():
+            v.close()
         self.terminal.__exit__(*args)
 
-def get_action(env, use_cache=True, replace_old=False, error_message=None, prompt="<<< "):
+def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt="<<< "):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
     obs = "\n".join(lines)
     context = env.context
-    act = get_cached_action(obs, context) if (use_cache and not replace_old) else None
-    if act is None:
+    suggester = context.suggesters[kind]
+    response = suggester.get_cached_response(obs) if (use_cache and not replace_old) else None
+    if response is None:
         t = context.terminal
         t.clear()
         for line in lines:
             t.print_line(line)
         if use_cache:
-            hints, shortcuts = suggestions.make_suggestions_and_shortcuts(env, obs, context.cache)
+            hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
+            default = suggester.default(env, obs)
         else:
             hints, shortcuts = [], []
+            default = ""
         if error_message is not None:
             t.print_line("")
             t.print_line(error_message)
             t.print_line("")
-        act = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt)
-        if use_cache: set_cached_action(obs, act, context)
-    return act
-
-def delete_cached_action(obs, context):
-    context.cursor.execute("DELETE FROM responses WHERE input = ?", (obs,))
-    context.db.commit()
-
-def get_cached_action(obs, context):
-    if obs in context.cache:
-        return context.cache[obs]
-    else:
-        return None
-
-def load_cache(context):
-    context.cursor.execute("SELECT * FROM responses")
-    return {obs:act for obs, act in context.cursor}
-
-def set_cached_action(obs, action, context):
-    context.cache[obs] = action
-    context.cursor.execute("INSERT INTO responses VALUES (?, ?)", (obs, action))
-    context.db.commit()
-
-def init_database():
-    with closing(sqlite3.connect("memoize.db")) as conn:
-        c = conn.cursor()
-        c.execute("CREATE TABLE responses (input varchar, output varchar)")
-        conn.commit()
-
-def get_database_size():
-    with closing(sqlite3.connect("memoize.db")) as conn:
-        c = conn.cursor()
-        result = 0
-        for _ in c.execute("SELECT * FROM responses"):
-            result += 1
-        return result
+        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default)
+        if use_cache: suggester.set_cached_response(obs, response)
+    return response
 
 if __name__ == "__main__":
     message, environment = main()
