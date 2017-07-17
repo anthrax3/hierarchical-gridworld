@@ -18,8 +18,95 @@ class Env(object):
         return (
             areinstances(self.args, Referent),
             areinstances(self.messages, Message),
+            areinstances(self.actions, Command),
         )
 
+    def copy(self, messages=None, actions=None, context=None, args=None, **kwargs):
+        if messages is None: messages = self.messages
+        if actions is None: actions = self.actions
+        if context is None: context = self.context
+        if args is None: args = self.args
+        return self.__class__(messages=messages, actions=actions, context=context, args=args, **kwargs)
+
+    def instantiate_message(self, m):
+        new_env_args = self.args
+        new_args = ()
+        for arg in m.args:
+            if isinstance(arg, Pointer):
+                new_arg = arg
+            else:
+                new_arg = Pointer(len(new_env_args), type=type(arg))
+                new_env_args = new_env_args + (arg,)
+            new_args = new_args + (new_arg,)
+        return Message(m.text, *new_args), self.copy(args=new_env_args)
+
+    def add_message(self, m):
+        new_m, new_env = self.instantiate_message(m)
+        return new_env.copy(messages = self.messages + (new_m,))
+
+    def add_action(self, a):
+        return self.copy(actions=self.actions + (a,))
+
+class Translator(Env):
+    def __init__(self, source="A", target="B", **kwargs):
+        self.source = source
+        self.target = target
+        super().__init__(**kwargs)
+
+    def copy(self, source=None, target=None, **kwargs):
+        if source is None: source = self.source
+        if target is None: target = self.target
+        return super().copy(source=source, target=target, **kwargs)
+
+    def get_lines(self):
+        message_lines = [str(m) for m in self.messages]
+        result = []
+        for i, line in enumerate(message_lines):
+            result.append(line)
+            if i % 2 == 1:
+                result.append("")
+        return result
+
+    def add_says(self, m):
+        return self.add_message(Message("{} says: ".format(self.source)) + m)
+
+    def add_gets(self, m):
+        return self.copy(messages = self.messages + (Message(self.get_prompt()) + m,))
+
+    def get_prompt(self):
+        return "{} gets: ".format(self.target)
+
+    def add_translation(self, original, translated):
+        translator = self.add_says(original)
+        translator = translator.add_gets(translation)
+        return translator.swap()
+
+    def swap(self):
+        return self.copy(source=self.target, target=self.source)
+
+    def query(self, m):
+        translator = self.add_says(m)
+        message = None
+        while True:
+            s = elicit.get_action(translator, error_message=message, prompt=self.get_prompt())
+            viewer = parse_view(s)
+            translation = parse_message(s)
+            if viewer is not None:
+                try:
+                    translator = viewer.view(translator)
+                    message = None
+                except BadCommand:
+                    message = "syntax error: {}".format(s)
+            elif translation is not None:
+                try:
+                    result = translation.instantiate(translator.args)
+                    return result, translator.add_gets(translation).swap()
+                except BadInstantiation:
+                    message = "syntax error: {}".format(s)
+            else:
+                message = "syntax error: {}".format(s)
+
+class Implementer(Env):
     def get_lines(self, message_callback=None, action_callback=None):
         if message_callback is None:
             def message_callback(m, env):
@@ -37,35 +124,11 @@ class Env(object):
             raise BadCommand()
         try:
             retval, new_env = command.execute(self)
-        except BadInstantiation:
-            raise BadCommand()
         except RecursionError:
             retval, new_env = None, 
             message, retval = None, Message("stack overflow")
         return retval, new_env
 
-    def copy(self, messages=None, actions=None, context=None, args=None):
-        if messages is None: messages = self.messages
-        if actions is None: actions = self.actions
-        if context is None: context = self.context
-        if args is None: args = self.args
-        return Env(messages=messages, actions=actions, context=context, args=args)
-
-    def instantiate_message(self, m):
-        new_env_args = self.args
-        new_args = ()
-        for arg in m.args:
-            new_arg = Pointer(len(new_env_args), type=type(arg))
-            new_env_args = new_env_args + (arg,)
-            new_args = new_args + (new_arg,)
-        return Message(m.text, *new_args), self.copy(args=new_env_args)
-
-    def add_message(self, m):
-        new_m, new_env = self.instantiate_message(m)
-        return new_env.copy(messages = self.messages + (new_m,))
-
-    def add_action(self, a):
-        return self.copy(actions=self.actions + (a,))
 
 def run(env, use_cache=True):
     message = None
@@ -79,15 +142,23 @@ def run(env, use_cache=True):
         except BadCommand:
             message = "syntax error: {}".format(act)
 
-def ask_Q(Q, context, sender=None):
+def ask_Q(Q, context, sender, receiver=None, translator=None):
+    translator = Translator(context=context) if translator is None else translator
+    receiver = Implementer(context=context) if receiver is None else receiver
     builtin_result = builtin_handler(Q)
     if builtin_result is not None:
-        env = Env(context=context).add_message(Q).add_action(Automatic())
-        return builtin_result, env
+        translator = translator.add_translation(Q, Q)
+        translator = translator.add_translation(builtin_result, builtin_result)
+        return builtin_result, Channel(translator=translator, implementer=receiver.add_message(Q).add_action(Automatic()))
+    translated_Q, translator = translator.query(Q)
     if sender is not None:
-        Q = messages.addressed_message(Q, sender, question=True)
-    env = Env(context=context).add_message(Q)
-    return run(env)
+        addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True)
+    receiver = receiver.add_message(addressed_Q)
+    A, receiver = run(receiver)
+    translated_A, translator = translator.query(A)
+    addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator)
+    return addressed_A
+
 
 def builtin_handler(Q):
     if (Q.matches("what cell contains the agent in world []?")
@@ -126,7 +197,6 @@ def builtin_handler(Q):
                 return Message("the cell []", messages.CellMessage(new_cell))
             else:
                 return Message("there is no cell there")
-
     return None
 
 #----commands
@@ -160,16 +230,18 @@ class Ask(Command):
         return "ask{} {}".format("" if self.recipient is None else self.recipient, self.message)
 
     def execute(self, env):
-        if self.recipient is not None:
-            message = addressed_message(self.message.instantiate(env.args), env, question=True)
-            new_env = self.recipient.instantiate(env.args).env
-            new_env = new_env.add_message(message)
-            response, new_env = run(new_env)
-        else:
+        try:
+            if self.recipient is not None:
+                channel = self.recipient.instantiate(env.args)
+                translator = channel.translator
+                receiver = channel.implementer
+            else:
+                translator = receiver = None
             message = self.message.instantiate(env.args)
-            response, new_env = ask_Q(message, sender=env, context=env.context)
-        response_message = addressed_message(response, new_env, question=False)
-        return None, env.add_action(self).add_message(response_message)
+            response = ask_Q(message, sender=env, context=env.context, receiver=receiver, translator=translator)
+            return None, env.add_action(self).add_message(response)
+        except BadInstantiation:
+            raise BadCommand()
 
 class View(Command):
 
@@ -177,7 +249,12 @@ class View(Command):
         self.n = n 
 
     def execute(self, env):
+        return None, self.view(env)
+
+    def view(self, env):
         n = self.n
+        if n < 0 or n >= len(env.args):
+            raise BadCommand()
         new_m, env = env.instantiate_message(env.args[n])
         def sub(m):
             if isinstance(m, Pointer):
@@ -196,12 +273,12 @@ class View(Command):
                 return Reply(message=sub(m.message))
             else:
                 return m
-        env = env.copy(
+        return env.copy(
             messages=tuple(sub(m) for m in env.messages),
             actions=tuple(sub(a) for a in env.actions),
             args=env.args[:n] + env.args[n+1:]
         )
-        return None, env
+
 
     def __str__(self):
         return "view {}".format(self.n)
@@ -215,7 +292,10 @@ class Reply(Command):
         return "reply {}".format(self.message)
 
     def execute(self, env):
-        return self.message.instantiate(env.args), env.add_action(self)
+        try:
+            return self.message.instantiate(env.args), env.add_action(self)
+        except BadInstantiation:
+            raise BadCommand()
 
 #class MalformedCommand(Command):
 #
@@ -290,17 +370,21 @@ def get_messages_in(c):
 
 #----parsing
 
-def parse_command(s):
+def parse(t, string):
     try:
-        return command.parseString(s, parseAll=True)[0]
-    except (pp.ParseException, BadInstantiation):
+        return t.parseString(string, parseAll=True)[0]
+    except pp.ParseException:
         return None
 
+
+def parse_command(s):
+    return parse(command, s)
+
 def parse_message(s):
-    try:
-        return message.parseString(s, parseAll=True)[0]
-    except (pp.ParseException, BadInstantiation):
-        return None
+    return parse(message, s)
+
+def parse_view(s):
+    return parse(view_command, s)
 
 def raw(s):
     return pp.Literal(s).suppress()

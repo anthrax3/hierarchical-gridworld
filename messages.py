@@ -91,8 +91,9 @@ class Channel(Referent):
 
     symbol = "@"
 
-    def __init__(self, env):
-        self.env = env
+    def __init__(self, implementer, translator):
+        self.implementer = implementer
+        self.translator = translator
 
     def well_formed(self):
         return True
@@ -100,8 +101,8 @@ class Channel(Referent):
     def instantiate(self, xs):
         raise Exception("should not try to instantiate a channel")
 
-def addressed_message(message, env, question=False):
-    return Message("{} from []: ".format("Q" if question else "A"), Channel(env)) + message
+def addressed_message(message, implementer, translator, question=False):
+    return Message("{} from []: ".format("Q" if question else "A"), Channel(implementer=implementer, translator=translator)) + message
 
 def is_addressed(message, req=["Q", "A"]):
     if isinstance(req, str): req = [req]
@@ -131,10 +132,12 @@ class Pointer(Referent):
     def __init__(self, n, type=Referent):
         self.n = n
         self.type = type
+        assert self.well_formed()
 
     def well_formed(self):
         return (
             issubclass(self.type, Referent) and
+            self.type != self.__class__ and
             isinstance(self.n, int)
         )
 

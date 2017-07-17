@@ -12,9 +12,9 @@ def main(env=None):
     if env is None:
         world = default_world()
         init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        env = envs.Env().add_message(init_message)
+        env = envs.Implementer().add_message(init_message)
     with Context() as context:
-        env.context = context
+        env = env.copy(context=context)
         return envs.run(env, use_cache=False)
 
 class Context(object):
@@ -33,7 +33,7 @@ class Context(object):
         self.db.close()
         self.terminal.__exit__(*args)
 
-def get_action(env, use_cache=True, replace_old=False, error_message=None):
+def get_action(env, use_cache=True, replace_old=False, error_message=None, prompt="<<< "):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -53,7 +53,7 @@ def get_action(env, use_cache=True, replace_old=False, error_message=None):
             t.print_line("")
             t.print_line(error_message)
             t.print_line("")
-        act = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt="<<< ")
+        act = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt)
         if use_cache: set_cached_action(obs, act, context)
     return act
 
