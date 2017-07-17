@@ -7,14 +7,11 @@ import elicit
 import debug
 
 class Env(object):
-    def __init__(self, messages=(), actions=(), context=None):
+    def __init__(self, context=None, messages=(), actions=(), args=()):
         self.messages = messages
         self.actions = actions
         self.context = context
-        all_args = []
-        for m in messages:
-            all_args.extend(m.args)
-        self.args = tuple(all_args)
+        self.args = args
         assert self.well_formed()
 
     def well_formed(self):
@@ -25,57 +22,71 @@ class Env(object):
 
     def get_lines(self, message_callback=None, action_callback=None):
         if message_callback is None:
-            def message_callback(m, args):
-                return ">>> {}".format(m.format_with_indices(args))
+            def message_callback(m, env):
+                return ">>> {}".format(m)
         if action_callback is None:
-            def action_callback(a):
+            def action_callback(a, env):
                 return "<<< {}".format(a)
-        last_arg = 0
-        message_lines = []
-        action_lines = []
-        for m in self.messages:
-            new_last_arg = last_arg + m.size
-            message_lines.append(message_callback(m, range(last_arg, new_last_arg)))
-            last_arg = new_last_arg
-        for a in self.actions:
-            action_lines.append(action_callback(a))
+        message_lines = [message_callback(m, self) for m in self.messages]
+        action_lines = [action_callback(a, self) for a in self.actions]
         return interleave(message_lines, ["" for _ in message_lines], action_lines)
 
     def step(self, act):
         command = parse_command(act)
-        new_env = self.add_action(command)
+        if command is None:
+            raise BadCommand()
         try:
-            message, retval = command.execute(new_env)
+            retval, new_env = command.execute(self)
         except BadInstantiation:
-            message, retval = MalformedCommand(str(command)).execute(new_env)
+            raise BadCommand()
         except RecursionError:
+            retval, new_env = None, 
             message, retval = None, Message("stack overflow")
-        if message is not None:
-            new_env = new_env.add_message(message)
         return retval, new_env
 
+    def copy(self, messages=None, actions=None, context=None, args=None):
+        if messages is None: messages = self.messages
+        if actions is None: actions = self.actions
+        if context is None: context = self.context
+        if args is None: args = self.args
+        return Env(messages=messages, actions=actions, context=context, args=args)
+
+    def instantiate_message(self, m):
+        new_env_args = self.args
+        new_args = ()
+        for arg in m.args:
+            new_arg = Pointer(len(new_env_args), type=type(arg))
+            new_env_args = new_env_args + (arg,)
+            new_args = new_args + (new_arg,)
+        return Message(m.text, *new_args), self.copy(args=new_env_args)
+
     def add_message(self, m):
-        return Env(messages=self.messages + (m,), actions=self.actions, context=self.context)
+        new_m, new_env = self.instantiate_message(m)
+        return new_env.copy(messages = self.messages + (new_m,))
 
     def add_action(self, a):
-        return Env(messages=self.messages, actions=self.actions + (a,), context=self.context)
-
+        return self.copy(actions=self.actions + (a,))
 
 def run(env, use_cache=True):
+    message = None
     while True:
-        act = elicit.get_action(env, use_cache=use_cache)
-        retval, env = env.step(act)
-        if retval is not None:
-            return retval, env
+        act = elicit.get_action(env, use_cache=use_cache, error_message=message)
+        try:
+            retval, env = env.step(act)
+            message = None
+            if retval is not None:
+                return retval, env
+        except BadCommand:
+            message = "syntax error: {}".format(act)
 
 def ask_Q(Q, context, sender=None):
     builtin_result = builtin_handler(Q)
     if builtin_result is not None:
-        env = Env(messages=(Q,), context=context).add_action(Automatic())
+        env = Env(context=context).add_message(Q).add_action(Automatic())
         return builtin_result, env
     if sender is not None:
         Q = messages.addressed_message(Q, sender, question=True)
-    env = Env(messages=(Q,), context=context)
+    env = Env(context=context).add_message(Q)
     return run(env)
 
 def builtin_handler(Q):
@@ -120,6 +131,9 @@ def builtin_handler(Q):
 
 #----commands
 
+class BadCommand(Exception):
+    pass
+
 class Command(object):
 
     def execute(self, env):
@@ -140,36 +154,57 @@ class Ask(Command):
 
     def __init__(self, message, recipient=None):
         self.message = message
-        self.recipient_pointer = recipient
+        self.recipient = recipient
 
     def __str__(self):
-        return "ask{} {}".format("" if self.recipient_pointer is None else self.recipient_pointer, self.message)
+        return "ask{} {}".format("" if self.recipient is None else self.recipient, self.message)
 
     def execute(self, env):
-        if self.recipient_pointer is not None:
+        if self.recipient is not None:
             message = addressed_message(self.message.instantiate(env.args), env, question=True)
-            new_env = self.recipient_pointer.instantiate(env.args).env
+            new_env = self.recipient.instantiate(env.args).env
             new_env = new_env.add_message(message)
             response, new_env = run(new_env)
         else:
             message = self.message.instantiate(env.args)
             response, new_env = ask_Q(message, sender=env, context=env.context)
-        return addressed_message(response, new_env, question=False), None
-
-def starts_with(p, s):
-    return len(s) >= len(p) and s[:len(p)] == p
+        response_message = addressed_message(response, new_env, question=False)
+        return None, env.add_action(self).add_message(response_message)
 
 class View(Command):
 
-    def __init__(self, message):
-        self.message = message
+    def __init__(self, n):
+        self.n = n 
 
     def execute(self, env):
-        return self.message.instantiate(env.args), None
+        n = self.n
+        new_m, env = env.instantiate_message(env.args[n])
+        def sub(m):
+            if isinstance(m, Pointer):
+                if m.n < n:
+                    return m
+                elif m.n == n:
+                    return sub(new_m)
+                elif m.n > n:
+                    return Pointer(m.n - 1, m.type)
+                return new_m if pointer.n == n else m
+            elif isinstance(m, Message):
+                return Message(m.text, *[sub(arg) for arg in m.args])
+            elif isinstance(m, Ask):
+                return Ask(message=sub(m.message), recipient=m.recipient)
+            elif isinstance(m, Reply):
+                return Reply(message=sub(m.message))
+            else:
+                return m
+        env = env.copy(
+            messages=tuple(sub(m) for m in env.messages),
+            actions=tuple(sub(a) for a in env.actions),
+            args=env.args[:n] + env.args[n+1:]
+        )
+        return None, env
 
     def __str__(self):
-        return "view {}".format(self.message)
-
+        return "view {}".format(self.n)
 
 class Reply(Command):
 
@@ -180,19 +215,19 @@ class Reply(Command):
         return "reply {}".format(self.message)
 
     def execute(self, env):
-        return None, self.message.instantiate(env.args)
+        return self.message.instantiate(env.args), env.add_action(self)
 
-class MalformedCommand(Command):
-
-    def __init__(self, text):
-        self.text = text
-
-    def __str__(self):
-        return self.text
-
-    def execute(self, env):
-        return Message("that is not a valid command"), None
-
+#class MalformedCommand(Command):
+#
+#    def __init__(self, text):
+#        self.text = text
+#
+#    def __str__(self):
+#        return self.text
+#
+#    def execute(self, env):
+#        return Message("that is not a valid command"), None
+#
 #class Move(Command):
 #
 #    def __init__(self, direction, world):
@@ -243,7 +278,8 @@ class Fix(Command):
 
     def execute(self, env):
         change = debug.fix_env(env)
-        return Message("behavior was changed" if change else "nothing was changed"), None
+        m = Message("behavior was changed" if change else "nothing was changed")
+        return None, env.add_action(self).add_message(m)
 
 def get_messages_in(c):
     if isinstance(c, Reply) or isinstance(c, Ask):
@@ -258,13 +294,13 @@ def parse_command(s):
     try:
         return command.parseString(s, parseAll=True)[0]
     except (pp.ParseException, BadInstantiation):
-        return MalformedCommand(s)
+        return None
 
 def parse_message(s):
     try:
         return message.parseString(s, parseAll=True)[0]
     except (pp.ParseException, BadInstantiation):
-        return Message("<<malformed message>>")
+        return None
 
 def raw(s):
     return pp.Literal(s).suppress()
@@ -277,23 +313,23 @@ def options(*xs):
 number = pp.Word("0123456789").setParseAction(lambda t : int(t[0]))
 prose = pp.Word(" ,!?+-/*.;:_<>=&%{}[]\'\"" + pp.alphas).leaveWhitespace()
 
-agent_referent = (raw("@")+ number).leaveWhitespace()
-agent_referent.setParseAction(lambda x : Pointer(x[0], Channel))
+agent_pointer = (raw("@")+ number).leaveWhitespace()
+agent_pointer.setParseAction(lambda x : Pointer(x[0], Channel))
 
-message_referent = (raw("#") + number).leaveWhitespace()
-message_referent.setParseAction(lambda x : Pointer(x[0], Message))
+message_pointer = (raw("#") + number).leaveWhitespace()
+message_pointer.setParseAction(lambda x : Pointer(x[0], Message))
 
-#world_referent = (raw("$") + number).leaveWhitespace()
-#world_referent.setParseAction(lambda xs : Pointer(xs[0], World))
+#world_pointer = (raw("$") + number).leaveWhitespace()
+#world_pointer.setParseAction(lambda xs : Pointer(xs[0], World))
 #
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
-argument = submessage | agent_referent | message_referent #| world_referent
+argument = submessage | agent_pointer | message_pointer #| world_pointer
 literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
     ).setParseAction(lambda xs : Message(tuple(unweave(xs)[0]), *unweave(xs)[1]))
-#message << (message_referent ^ literal_message)
+#message << (message_pointer ^ literal_message)
 message << literal_message
 
 target_modifier = raw("@")+number
@@ -311,14 +347,14 @@ fix_command.setParseAction(lambda xs : Fix())
 reply_command = (raw("reply")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
-view_command = raw("view") + pp.Empty() + message_referent
+view_command = raw("view") + pp.Empty() + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-#move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
+#move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_pointer
 #move_command.setParseAction(lambda xs : Move(xs[0], xs[1]))
-#gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_referent
+#gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_pointer
 #gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
-#look_command = raw("look in") + pp.Empty() + world_referent
+#look_command = raw("look in") + pp.Empty() + world_pointer
 #look_command.setParseAction(lambda xs : Look(xs[0]))
 
 command = ask_command | reply_command | view_command | fix_command # | gaze_command | move_command | look_command

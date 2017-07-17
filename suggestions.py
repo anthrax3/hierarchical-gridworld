@@ -31,10 +31,10 @@ def make_suggestions_and_shortcuts(env, obs, cache, num_suggestions=5, num_short
     def useful_shortcut(h):
         return len(h) > 8
     for m in env.messages:
-        if not messages.is_addressed(m):
-            add_shortcut(m)
-        elif messages.is_addressed(m):
-            add_shortcut(messages.unaddressed_message(m))
+        if messages.is_addressed(m):
+            m = messages.unaddressed_message(m)
+        for h in messages.submessages(m, include_root=True):
+            add_shortcut(h)
     for c in env.actions:
         for m in envs.get_messages_in(c):
             for h in messages.submessages(m, include_root=True):

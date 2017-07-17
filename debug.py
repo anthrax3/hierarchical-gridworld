@@ -27,7 +27,7 @@ def fix_env(env):
         return True
 
 def pick_command(prompt, env):
-    def display_action(a):
+    def display_action(a, env):
         result = "{}. {}".format(display_action.k, a)
         display_action.k += 1
         return result
@@ -51,5 +51,5 @@ def pick_command(prompt, env):
                     t.print_line("please enter an integer between 0 and {}".format(display_actions.k - 1))
             except ValueError:
                 t.print_line("please type 'none' or an integer")
-    new_env = envs.Env(messages=env.messages[:n+1], actions=env.actions[:n], context=env.context)
+    new_env = envs.Env(messages=env.messages[:n+1], actions=env.actions[:n], context=env.context, args=env.args)
     return new_env

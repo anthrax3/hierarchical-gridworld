@@ -29,3 +29,7 @@ def elicit_input(observations, actions):
     lines = interleave(observations, [">>> {}".format(action) for action in actions])
     print("\n\n".join(lines))
     return raw_input("\n>>> ")
+
+def starts_with(p, s):
+    return len(s) >= len(p) and s[:len(p)] == p
+

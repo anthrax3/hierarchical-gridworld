@@ -10,7 +10,9 @@ import IPython
 
 def main(env=None):
     if env is None:
-        env = envs.Env((messages.Message("[] is a world", messages.WorldMessage(default_world())),))
+        world = default_world()
+        init_message = messages.Message("[] is a world", messages.WorldMessage(world))
+        env = envs.Env().add_message(init_message)
     with Context() as context:
         env.context = context
         return envs.run(env, use_cache=False)
@@ -31,7 +33,9 @@ class Context(object):
         self.db.close()
         self.terminal.__exit__(*args)
 
-def get_action(env, use_cache=True, replace_old=False):
+def get_action(env, use_cache=True, replace_old=False, error_message=None):
+    if error_message is not None:
+        replace_old = True
     lines = env.get_lines()
     obs = "\n".join(lines)
     context = env.context
@@ -45,6 +49,10 @@ def get_action(env, use_cache=True, replace_old=False):
             hints, shortcuts = suggestions.make_suggestions_and_shortcuts(env, obs, context.cache)
         else:
             hints, shortcuts = [], []
+        if error_message is not None:
+            t.print_line("")
+            t.print_line(error_message)
+            t.print_line("")
         act = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt="<<< ")
         if use_cache: set_cached_action(obs, act, context)
     return act

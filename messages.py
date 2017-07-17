@@ -74,15 +74,15 @@ class WorldMessage(Message):
 
     def __init__(self, world):
         self.world = world
-        self.args = ()
-        self.text = ("the state of a gridworld",)
+        self.args = (self,)
+        self.text = ("the state ", " of a gridworld",)
 
 class CellMessage(Message):
 
     def __init__(self, cell):
         self.cell = cell
-        self.args = ()
-        self.text = ("a cell in a gridworld",)
+        self.args = (self,)
+        self.text = ("the cell ", " in a gridworld")
 
 class Channel(Referent):
     """
