@@ -150,8 +150,8 @@ class Translator(Env):
                             return Translator(context=self.context).run(arg.instantiate(translator.args))[0]
                         else:
                             return arg
-                    recursive_translation = translation.transform_args(sub)
-                    result = recursive_translation.instantiate(translator.args)
+                    translation = translation.transform_args(sub)
+                    result = translation.instantiate(translator.args)
                     return result, translator.add_action(translation)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
