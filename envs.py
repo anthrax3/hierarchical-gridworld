@@ -30,15 +30,14 @@ class Env(object):
 
     def instantiate_message(self, m):
         new_env_args = self.args
-        new_args = ()
-        for arg in m.args:
+        def sub(arg):
+            nonlocal new_env_args
             if isinstance(arg, Pointer):
-                new_arg = arg
+                return arg
             else:
-                new_arg = Pointer(len(new_env_args), type=type(arg))
                 new_env_args = new_env_args + (arg,)
-            new_args = new_args + (new_arg,)
-        return Message(m.text, *new_args), self.copy(args=new_env_args)
+                return Pointer(len(new_env_args) - 1, type=type(arg))
+        return m.transform_args(sub), self.copy(args=new_env_args)
 
     def add_message(self, m):
         new_m, new_env = self.instantiate_message(m)
@@ -99,6 +98,12 @@ class Translator(Env):
                     message = "syntax error: {}".format(s)
             elif translation is not None:
                 try:
+                    def sub(arg):
+                        if isinstance(arg, Message):
+                            return Translator(context=self.context).query(arg.instantiate(translator.args))[0]
+                        else:
+                            return arg
+                    translation = translation.transform_args(sub)
                     result = translation.instantiate(translator.args)
                     return result, translator.add_gets(translation).swap()
                 except BadInstantiation:

@@ -68,7 +68,11 @@ class Message(Referent):
         return self.text != other.text or self.args != other.args
 
     def instantiate(self, xs):
-        return Message(self.text, *[arg.instantiate(xs) for arg in self.args])
+        return self.transform_args(lambda arg : arg.instantiate(xs))
+
+    def transform_args(self, f):
+        return Message(self.text, *[f(a) for a in self.args])
+
 
 class WorldMessage(Message):
 
