@@ -27,7 +27,7 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
-def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt="<<< "):
+def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt="<<< ", default=None):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -42,10 +42,12 @@ def get_response(env, kind="implement", use_cache=True, replace_old=False, error
             t.print_line(line)
         if use_cache:
             hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
-            default = suggester.default(env, obs)
+            if default is None:
+                default = suggester.default(env, obs)
         else:
             hints, shortcuts = [], []
-            default = ""
+            if default is None:
+                default = ""
         if error_message is not None:
             t.print_line("")
             t.print_line(error_message)

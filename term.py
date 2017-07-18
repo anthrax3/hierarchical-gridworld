@@ -125,14 +125,14 @@ class Terminal(object):
         self.t.__exit__(*args)
 
     def putch(self, x, y, ch):
-        self.t.change_cell(x, y, ord(ch), termbox.DEFAULT, termbox.DEFAULT)
+        if ch == "\n":
+            return (0, y+1)
+        else:
+            self.t.change_cell(x, y, ord(ch), termbox.DEFAULT, termbox.DEFAULT)
+            return self.advance(x, y)
 
     def print_ch(self, ch):
-        self.putch(self.x, self.y, ch)
-        self.move()
-
-    def move(self, n=1):
-        self.x, self.y = self.advance(self.x, self.y)
+        self.x, self.y = self.putch(self.x, self.y, ch)
 
     def advance(self, x, y, n=1):
         x += n
@@ -143,11 +143,7 @@ class Terminal(object):
 
     def putchs(self, x, y, chs):
         for ch in chs:
-            self.putch(x, y, ch)
-            x, y = self.advance(x, y)
-            if ch == "\n":
-                x = 0
-                y += 1
+            x, y = self.putch(x, y, ch)
         return x, y
 
     def print_line(self, line="", new_line=True):

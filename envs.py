@@ -1,10 +1,12 @@
 import pyparsing as pp
 from utils import unweave, areinstances, interleave
+import utils
 from messages import Message, Pointer, Channel, Referent, addressed_message, BadInstantiation
 import messages
 import worlds
 import elicit
 import debug
+import term
 
 class Env(object):
     def __init__(self, context=None, messages=(), actions=(), args=()):
@@ -59,14 +61,16 @@ class Env(object):
             t.print_line(line)
         done = False
         while not done:
-            n = term.get_input(t, prompt=prompt)
+            n = term.get_input(t, prompt="which of these choices do you want to change? ")
             if n == "none":
                 return None
             else:
                 try:
                     n = int(n)
                     if n >= 0 and n < len(self.actions):
-                        self.copy(messages=self.messages[:n+1], actions=self.actions[:n]).get_response()
+                        old = "{}".format(self.actions[n])
+                        message = "previously responded '{}'".format(old)
+                        self.copy(messages=self.messages[:n+1], actions=self.actions[:n]).get_response(error_message=message, default=old)
                         return n
                     else:
                         t.print_line("please enter an integer between 0 and {}".format(len(self.actions) - 1))
@@ -81,7 +85,7 @@ class Implementer(Env):
     @staticmethod
     def display_action(i, a, debug=False):
         prefix = "<<< "
-        if debug: prefix = pad_to("{}.".format(i), len(prefix))
+        if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
         return "{}{}".format(prefix, a)
 
     def get_response(self, **kwargs):
@@ -116,7 +120,7 @@ class Translator(Env):
     def display_action(i, a, debug=False):
         receiver = "B" if i % 2 == 0 else "A"
         prefix = "{} <<< ".format(receiver)
-        if debug: prefix = pad_to("{}.".format(i), len(prefix))
+        if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
         return "{}{}\n".format(prefix, a)
 
     def get_response(self, **kwargs):
@@ -132,7 +136,7 @@ class Translator(Env):
             translation = parse_message(s)
             fixer = parse_fix(s)
             if fixer is not None:
-                message = fixer.fix(env)
+                message = fixer.fix(translator)
             elif viewer is not None:
                 try:
                     translator = viewer.view(translator)
@@ -146,8 +150,8 @@ class Translator(Env):
                             return Translator(context=self.context).run(arg.instantiate(translator.args))[0]
                         else:
                             return arg
-                    translation = translation.transform_args(sub)
-                    result = translation.instantiate(translator.args)
+                    recursive_translation = translation.transform_args(sub)
+                    result = recursive_translation.instantiate(translator.args)
                     return result, translator.add_action(translation)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
