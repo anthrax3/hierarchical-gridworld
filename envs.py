@@ -46,51 +46,94 @@ class Env(object):
     def add_action(self, a):
         return self.copy(actions=self.actions + (a,))
 
-class Translator(Env):
-    def __init__(self, source="A", target="B", **kwargs):
-        self.source = source
-        self.target = target
-        super().__init__(**kwargs)
+    def get_lines(self, debug=False):
+        message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
+        action_lines = [self.display_action(i, a, debug) for i, a in enumerate(self.actions)]
+        return interleave(message_lines, action_lines)
 
-    def copy(self, source=None, target=None, **kwargs):
-        if source is None: source = self.source
-        if target is None: target = self.target
-        return super().copy(source=source, target=target, **kwargs)
+    def fix(self):
+        t = self.context.terminal
+        t.clear()
+        lines = self.get_lines(debug=True)
+        for line in lines:
+            t.print_line(line)
+        done = False
+        while not done:
+            n = term.get_input(t, prompt=prompt)
+            if n == "none":
+                return None
+            else:
+                try:
+                    n = int(n)
+                    if n >= 0 and n < len(self.actions):
+                        self.copy(messages=self.messages[:n+1], actions=self.actions[:n]).get_response()
+                        return n
+                    else:
+                        t.print_line("please enter an integer between 0 and {}".format(len(self.actions) - 1))
+                except ValueError:
+                    t.print_line("please type 'none' or an integer")
 
-    def get_lines(self):
-        message_lines = [str(m) for m in self.messages]
-        result = []
-        for i, line in enumerate(message_lines):
-            result.append(line)
-            if i % 2 == 1:
-                result.append("")
-        return result
+class Implementer(Env):
+    @staticmethod
+    def display_message(i, m):
+        return ">>> {}\n".format(m)
 
-    def add_says(self, m):
-        return self.add_message(Message("{} says: ".format(self.source)) + m)
+    @staticmethod
+    def display_action(i, a, debug=False):
+        prefix = "<<< "
+        if debug: prefix = pad_to("{}.".format(i), len(prefix))
+        return "{}{}".format(prefix, a)
 
-    def add_gets(self, m):
-        return self.copy(messages = self.messages + (Message(self.get_prompt()) + m,))
+    def get_response(self, **kwargs):
+        return elicit.get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
-    def get_prompt(self):
-        return "{} gets: ".format(self.target)
-
-    def add_translation(self, original, translated):
-        translator = self.add_says(original)
-        translator = translator.add_gets(translation)
-        return translator.swap()
-
-    def swap(self):
-        return self.copy(source=self.target, target=self.source)
-
-    def query(self, m):
-        translator = self.add_says(m)
+    def run(self, m, use_cache=True):
+        implementer = self.add_message(m)
         message = None
         while True:
-            s = elicit.get_response(translator, error_message=message, prompt=self.get_prompt(), kind="translate")
+            s = implementer.get_response(error_message=message, use_cache=use_cache)
+            command = parse_command(s)
+            if command is None:
+                message = "syntax error: {}".format(s)
+            else:
+                message = None
+                try:
+                    retval, implementer = command.execute(implementer)
+                    if retval is not None:
+                        return retval, implementer
+                except BadCommand:
+                    message = "syntax error: {}".format(s)
+                except RecursionError:
+                    implementer = self.add_action(command).add_message(Message("stack overflow"))
+
+class Translator(Env):
+    @staticmethod
+    def display_message(i, m):
+        sender = "A" if i % 2 == 0 else "B"
+        return "{} >>> {}".format(sender, m)
+
+    @staticmethod
+    def display_action(i, a, debug=False):
+        receiver = "B" if i % 2 == 0 else "A"
+        prefix = "{} <<< ".format(receiver)
+        if debug: prefix = pad_to("{}.".format(i), len(prefix))
+        return "{}{}\n".format(prefix, a)
+
+    def get_response(self, **kwargs):
+        prompt = "{} <<< ".format("B" if len(self.actions) % 2 == 0 else "A")
+        return elicit.get_response(self, prompt=prompt, kind="translate", **kwargs)
+
+    def run(self, m, use_cache=True):
+        translator = self.add_message(m)
+        message = None
+        while True:
+            s = translator.get_response(error_message=message, use_cache=use_cache)
             viewer = parse_view(s)
             translation = parse_message(s)
-            if viewer is not None:
+            fixer = parse_fix(s)
+            if fixer is not None:
+                message = fixer.fix(env)
+            elif viewer is not None:
                 try:
                     translator = viewer.view(translator)
                     message = None
@@ -100,70 +143,32 @@ class Translator(Env):
                 try:
                     def sub(arg):
                         if isinstance(arg, Message):
-                            return Translator(context=self.context).query(arg.instantiate(translator.args))[0]
+                            return Translator(context=self.context).run(arg.instantiate(translator.args))[0]
                         else:
                             return arg
                     translation = translation.transform_args(sub)
                     result = translation.instantiate(translator.args)
-                    return result, translator.add_gets(translation).swap()
+                    return result, translator.add_action(translation)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
             else:
                 message = "syntax error: {}".format(s)
-
-class Implementer(Env):
-    def get_lines(self, message_callback=None, action_callback=None):
-        if message_callback is None:
-            def message_callback(m, env):
-                return ">>> {}".format(m)
-        if action_callback is None:
-            def action_callback(a, env):
-                return "<<< {}".format(a)
-        message_lines = [message_callback(m, self) for m in self.messages]
-        action_lines = [action_callback(a, self) for a in self.actions]
-        return interleave(message_lines, ["" for _ in message_lines], action_lines)
-
-    def step(self, act):
-        command = parse_command(act)
-        if command is None:
-            raise BadCommand()
-        try:
-            retval, new_env = command.execute(self)
-        except RecursionError:
-            retval, new_env = None, 
-            message, retval = None, Message("stack overflow")
-        return retval, new_env
-
-
-def run(env, use_cache=True):
-    message = None
-    while True:
-        act = elicit.get_response(env, use_cache=use_cache, error_message=message, kind="implement")
-        try:
-            retval, env = env.step(act)
-            message = None
-            if retval is not None:
-                return retval, env
-        except BadCommand:
-            message = "syntax error: {}".format(act)
 
 def ask_Q(Q, context, sender, receiver=None, translator=None):
     translator = Translator(context=context) if translator is None else translator
     receiver = Implementer(context=context) if receiver is None else receiver
     builtin_result = builtin_handler(Q)
     if builtin_result is not None:
-        translator = translator.add_translation(Q, Q)
-        translator = translator.add_translation(builtin_result, builtin_result)
+        translator = translator.add_message(Q).add_action(Q)
+        translator = translator.add_message(builtin_result).add_action(builtin_result)
         return builtin_result, Channel(translator=translator, implementer=receiver.add_message(Q).add_action(Automatic()))
-    translated_Q, translator = translator.query(Q)
+    translated_Q, translator = translator.run(Q)
     if sender is not None:
         addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True)
-    receiver = receiver.add_message(addressed_Q)
-    A, receiver = run(receiver)
-    translated_A, translator = translator.query(A)
+    A, receiver = receiver.run(addressed_Q)
+    translated_A, translator = translator.run(A)
     addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator)
     return addressed_A
-
 
 def builtin_handler(Q):
     if (Q.matches("what cell contains the agent in world []?")
@@ -302,69 +307,18 @@ class Reply(Command):
         except BadInstantiation:
             raise BadCommand()
 
-#class MalformedCommand(Command):
-#
-#    def __init__(self, text):
-#        self.text = text
-#
-#    def __str__(self):
-#        return self.text
-#
-#    def execute(self, env):
-#        return Message("that is not a valid command"), None
-#
-#class Move(Command):
-#
-#    def __init__(self, direction, world):
-#        self.world_pointer = world
-#        self.direction = direction
-#
-#    def __str__(self):
-#        return "move {} in {}".format(self.direction, self.world_pointer)
-#
-#    def execute(self, env):
-#        world = self.world_pointer.instantiate(env.args).world
-#        new_world, moved = move_person(world, self.direction)
-#        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
-#        return result, None
-#
-#class Gaze(Command):
-#
-#    def __init__(self, direction, world):
-#        self.world_pointer = world
-#        self.direction = direction
-#
-#    def __str__(self):
-#        return "gaze {} in {}".format(self.direction, self.world_pointer)
-#
-#    def execute(self, env):
-#        world = self.world_pointer.instantiate(env.args).world
-#        new_world, moved = move_gaze(world, self.direction)
-#        result = Message("the result is []", World(new_world)) if moved else Message("you can't move")
-#        return result, None
-#
-#class Look(Command):
-#
-#    def __init__(self, world):
-#        self.world_pointer = world
-#
-#    def __str__(self):
-#        return "look in {}".format(self.world_pointer)
-#
-#    def execute(self, env):
-#        world = self.world_pointer.instantiate(env.args).world
-#        result = look(world)
-#        return Message("you see {}".format(result)), None
-
 class Fix(Command):
 
     def __str__(self):
         return "fix"
 
     def execute(self, env):
-        change = debug.fix_env(env)
-        m = Message("behavior was changed" if change else "nothing was changed")
-        return None, env.add_action(self).add_message(m)
+        return None, env.add_action(self).add_message(Message(self.fix(env)))
+    
+    def fix(self, env):
+        change = env.fix()
+        return "response {} changed".format(change) if change is not None else "nothing was changed"
+
 
 def get_messages_in(c):
     if isinstance(c, Reply) or isinstance(c, Ask):
@@ -391,6 +345,9 @@ def parse_message(s):
 def parse_view(s):
     return parse(view_command, s)
 
+def parse_fix(s):
+    return parse(fix_command, s)
+
 def raw(s):
     return pp.Literal(s).suppress()
 def options(*xs):
@@ -408,9 +365,6 @@ agent_pointer.setParseAction(lambda x : Pointer(x[0], Channel))
 message_pointer = (raw("#") + number).leaveWhitespace()
 message_pointer.setParseAction(lambda x : Pointer(x[0], Message))
 
-#world_pointer = (raw("$") + number).leaveWhitespace()
-#world_pointer.setParseAction(lambda xs : Pointer(xs[0], World))
-#
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
 argument = submessage | agent_pointer | message_pointer #| world_pointer
@@ -418,7 +372,6 @@ literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
     ).setParseAction(lambda xs : Message(tuple(unweave(xs)[0]), *unweave(xs)[1]))
-#message << (message_pointer ^ literal_message)
 message << literal_message
 
 target_modifier = raw("@")+number
@@ -439,11 +392,4 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 view_command = raw("view") + pp.Empty() + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-#move_command = raw("move") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_pointer
-#move_command.setParseAction(lambda xs : Move(xs[0], xs[1]))
-#gaze_command = raw("gaze") + options("left", "up", "right", "down") + raw("in") + pp.Empty() + world_pointer
-#gaze_command.setParseAction(lambda xs : Gaze(xs[0], xs[1]))
-#look_command = raw("look in") + pp.Empty() + world_pointer
-#look_command.setParseAction(lambda xs : Look(xs[0]))
-
-command = ask_command | reply_command | view_command | fix_command # | gaze_command | move_command | look_command
+command = ask_command | reply_command | view_command | fix_command

@@ -145,15 +145,16 @@ class Terminal(object):
         for ch in chs:
             self.putch(x, y, ch)
             x, y = self.advance(x, y)
+            if ch == "\n":
+                x = 0
+                y += 1
         return x, y
 
-    def print_line(self, line, new_line=True):
-        if new_line: self.new_line()
+    def print_line(self, line="", new_line=True):
+        if new_line:
+            self.x = 0
+            self.y += 1
         self.x, self.y = self.putchs(self.x, self.y, line)
-
-    def new_line(self):
-        self.x = 0
-        self.y += 1
 
     def clear(self):
         self.t.clear()

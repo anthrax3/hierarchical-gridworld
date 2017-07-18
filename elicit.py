@@ -6,14 +6,11 @@ import envs
 import suggestions
 import IPython
 
-def main(env=None):
-    if env is None:
+def main():
+    with Context() as context:
         world = default_world()
         init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        env = envs.Implementer().add_message(init_message)
-    with Context() as context:
-        env = env.copy(context=context)
-        return envs.run(env, use_cache=False)
+        return envs.Implementer(context=context).run(init_message, use_cache=False)
 
 class Context(object):
 

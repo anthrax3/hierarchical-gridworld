@@ -33,3 +33,5 @@ def elicit_input(observations, actions):
 def starts_with(p, s):
     return len(s) >= len(p) and s[:len(p)] == p
 
+def pad_to(s, k):
+    return s + " " * (k - len(s))

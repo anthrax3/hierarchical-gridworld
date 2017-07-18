@@ -4,20 +4,6 @@ import elicit
 import envs
 import term
 
-def sanity_check(Q, A, context):
-    debug_q = Message("does [] pass a basic sanity check as a response to []?", A, Q)
-    debug_a, _ = envs.ask_Q(debug_q, context)
-    return message_to_bool(debug_a, context)
-
-def message_to_bool(m, context):
-    if m.text == ("yes",):
-        return True
-    elif m.text == ("no",):
-        return False
-    else:
-        new_m, _ = envs.ask_Q(Message("does [] represent yes? please answer with 'yes' or 'no'", m), context)
-        return message_to_bool(new_m, context)
-
 def fix_env(env):
     env = pick_command("which of these commands do you want to change? ", env)
     if env is None:
@@ -27,14 +13,9 @@ def fix_env(env):
         return True
 
 def pick_command(prompt, env):
-    def display_action(a, env):
-        result = "{}. {}".format(display_action.k, a)
-        display_action.k += 1
-        return result
-    display_action.k = 0
     t = env.context.terminal
     t.clear()
-    lines = env.get_lines(action_callback=display_action)
+    lines = env.get_lines(debug=True)
     for line in lines:
         t.print_line(line)
     done = False
@@ -45,11 +26,11 @@ def pick_command(prompt, env):
         else:
             try:
                 n = int(n)
-                if n >= 0 and n < display_action.k:
+                if n >= 0 and n < len(env.actions):
                     done = True
                 else:
-                    t.print_line("please enter an integer between 0 and {}".format(display_actions.k - 1))
+                    t.print_line("please enter an integer between 0 and {}".format(len(env.actions) - 1))
             except ValueError:
                 t.print_line("please type 'none' or an integer")
-    new_env = envs.Env(messages=env.messages[:n+1], actions=env.actions[:n], context=env.context, args=env.args)
+    new_env = env.copy(messages=env.messages[:n+1], actions=env.actions[:n])
     return new_env
