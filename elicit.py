@@ -7,10 +7,13 @@ import suggestions
 import IPython
 
 def main():
-    with Context() as context:
-        world = default_world()
-        init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        return envs.Implementer(context=context).run(init_message, use_cache=False)
+    try:
+        with Context() as context:
+            world = default_world()
+            init_message = messages.Message("[] is a world", messages.WorldMessage(world))
+            return envs.Implementer(context=context).run(init_message, use_cache=False)
+    except KeyboardInterrupt:
+        return None
 
 class Context(object):
 

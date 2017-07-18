@@ -88,6 +88,10 @@ class Input(object):
                 self.cursor += self.t.width
             elif self.current_draft < len(self.drafts) - 1:
                 self.move_to_draft(self.current_draft+1)
+        elif key == termbox.KEY_CTRL_R:
+            self.jump_to_paren(-1)
+        elif key == termbox.KEY_CTRL_K:
+            self.jump_to_paren(1)
         elif key == termbox.KEY_ENTER:
             return self.s
         elif key in self.shortcuts:
@@ -97,6 +101,14 @@ class Input(object):
             self.insert_ch(ch)
         self.refresh()
         return None
+
+    def jump_to_paren(self, d):
+        def to():
+            return self.cursor + d
+        while to() <= len(self.s) and to() >= 0:
+            self.cursor = to()
+            if self.cursor == 0 or self.s[self.cursor-1] == ")":
+                return
 
     def elicit(self):
         self.refresh()
