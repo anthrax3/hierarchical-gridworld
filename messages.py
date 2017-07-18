@@ -22,12 +22,19 @@ class Message(Referent):
 
     symbol = "#"
 
-    def __init__(self, text, *args):
+    def __init__(self, text, *args, pending=False):
         if isinstance(text, six.string_types):
             text = tuple(text.split("[]"))
         args = tuple(args)
         self.text = text
         self.args = args 
+        self.pending = pending
+        if not pending:
+            assert self.well_formed()
+
+    def finalize_args(self, args):
+        assert self.pending
+        self.args = args
         assert self.well_formed()
 
     def matches(self, text):
@@ -61,32 +68,44 @@ class Message(Referent):
             return s.format(arg)
         return self.format([f(arg) for arg in self.args])
 
-    def __eq__(self, other):
-        return self.text == other.text and self.args == other.args
-
-    def __ne__(self, other):
-        return self.text != other.text or self.args != other.args
-
     def instantiate(self, xs):
-        return self.transform_args(lambda arg : arg.instantiate(xs))
+        return self.transform_args_recursive(lambda arg : arg.instantiate(xs))
+
+    def transform_args_recursive(self, f, cache=None):
+        if cache is None: cache = {}
+        if self in cache: return cache[self]
+        result = Message(self.text, pending=True)
+        cache[self] = result
+        def sub(a):
+            if isinstance(a, Message):
+                return a.transform_args_recursive(f, cache=cache)
+            else:
+                return f(a)
+        result.finalize_args(tuple(sub(a) for a in self.args))
+        return result
 
     def transform_args(self, f):
         return Message(self.text, *[f(a) for a in self.args])
-
 
 class WorldMessage(Message):
 
     def __init__(self, world):
         self.world = world
         self.args = (self,)
-        self.text = ("the state ", " of a gridworld",)
+        self.text = ("the gridworld grid ", "")
+
+    def __str__(self):
+        return "<<gridworld grid>>"
 
 class CellMessage(Message):
 
     def __init__(self, cell):
         self.cell = cell
         self.args = (self,)
-        self.text = ("the cell ", " in a gridworld")
+        self.text = ("the gridworld cell ", "")
+
+    def __str__(self):
+        return "<<gridworld cell>>"
 
 class Channel(Referent):
     """
@@ -117,19 +136,20 @@ def strip_prefix(message, sep=": "):
             return Message(new_text, *new_args)
     return message
 
-def submessages(ref, include_root=True):
-    if isinstance(ref, Message):
+def submessages(ref, include_root=True, seen=None):
+    if seen is None: seen = set()
+    if isinstance(ref, Message) and ref not in seen:
         if include_root:
+            seen.add(ref)
             yield ref
         for arg in ref.args:
-            yield from submessages(arg)
+            yield from submessages(arg, seen=seen)
 
 class Pointer(Referent):
     """
     A Pointer is an abstract variable,
     which can be instantiated given a list of arguments
     """
-
 
     def __init__(self, n, type=Referent):
         self.n = n

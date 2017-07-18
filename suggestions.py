@@ -2,7 +2,7 @@ from fuzzywuzzy import fuzz
 from contextlib import closing
 import heapq
 import messages
-import envs
+import commands
 import sqlite3
 
 def match(query, key):
@@ -67,14 +67,14 @@ class Suggester(object):
             for h in messages.submessages(messages.strip_prefix(m), include_root=True):
                 add_shortcut(h)
         for c in env.actions:
-            for m in envs.get_messages_in(c):
+            for m in [c] if isinstance(c, messages.Message) else c.messages():
                 for h in messages.submessages(m, include_root=True):
                     add_shortcut(h)
         def useful_suggestion(h):
-            c = envs.parse_command(h)
-            m = envs.parse_message(h)
+            c = commands.parse_command(h)
+            m = commands.parse_message(h)
             if c is not None:
-                for m in envs.get_messages_in(c):
+                for m in c.messages():
                     try:
                         m.instantiate(env.args)
                     except messages.BadInstantiation:
@@ -89,10 +89,10 @@ class Suggester(object):
             return False
         suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
         for h in suggestions:
-            c = envs.parse_command(h)
-            m = envs.parse_message(h)
+            c = commands.parse_command(h)
+            m = commands.parse_message(h)
             if c is not None:
-                for m in envs.get_messages_in(c):
+                for m in c.messages():
                     for sub_m in messages.submessages(m, include_root=True):
                         add_shortcut(sub_m)
             elif m is not None:
@@ -130,7 +130,6 @@ def get_database_size():
         results = Counter()
         tables = [t[0] for t in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         for table in tables:
-            print(table)
             for _ in c.execute("SELECT * FROM {}".format(table)):
-                results[table[0]] += 1
+                results[table] += 1
         return results
