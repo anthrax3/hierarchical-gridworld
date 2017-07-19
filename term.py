@@ -2,6 +2,7 @@ import termbox
 import time
 import sys
 import random
+import utils
 
 color = termbox.DEFAULT
 
@@ -55,6 +56,13 @@ class Input(object):
         self.t.putchs(self.x, self.y, pad_to(self.high_water, self.s))
         x, y = self.t.advance(self.x, self.y, self.cursor)
         self.t.set_cursor(x, y)
+        paren_loc = self.paren_to_highlight()
+        if paren_loc is not None:
+            other_paren = utils.matched_paren(self.s, paren_loc)
+            if other_paren is not None:
+                for p in [paren_loc, other_paren]:
+                    x, y = self.t.advance(self.x, self.y, p)
+                    self.t.putch(x, y, self.s[p], termbox.BLACK, termbox.CYAN)
         self.t.refresh()
 
     def insert_ch(self, ch, n=None):
@@ -69,6 +77,13 @@ class Input(object):
         self.s = self.s[:n-1] + self.s[n:]
         if n <= self.cursor:
             self.cursor -= 1
+
+    def paren_to_highlight(self):
+        if self.cursor < len(self.s) and self.s[self.cursor] in "()":
+            return self.cursor
+        if self.cursor > 0 and self.s[self.cursor-1] in "()":
+            return self.cursor - 1
+        return None
 
     def poll(self):
         ch, key = self.t.poll()
@@ -136,11 +151,11 @@ class Terminal(object):
     def __exit__(self, *args):
         self.t.__exit__(*args)
 
-    def putch(self, x, y, ch):
+    def putch(self, x, y, ch, fg=termbox.DEFAULT, bg=termbox.DEFAULT):
         if ch == "\n":
             return (0, y+1)
         else:
-            self.t.change_cell(x, y, ord(ch), termbox.DEFAULT, termbox.DEFAULT)
+            self.t.change_cell(x, y, ord(ch), fg, bg)
             return self.advance(x, y)
 
     def print_ch(self, ch):
