@@ -2,6 +2,7 @@ import termbox
 import time
 import sys
 import random
+import utils
 
 color = termbox.DEFAULT
 
@@ -13,12 +14,12 @@ shortcut_bindings = [
     ('t', termbox.KEY_CTRL_T),
 ]
 
-def get_input(t, suggestions=[], shortcuts=[], prompt=None):
+def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
     shortcut_dict = {}
     for (c, k), template in zip(shortcut_bindings, shortcuts):
         shortcut_dict[k] = template
     if prompt is not None: t.print_line(prompt)
-    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict)
+    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict, **kwargs)
     if shortcuts or suggestions:
         for i in range(3):
             t.print_line("")
@@ -32,14 +33,14 @@ def get_input(t, suggestions=[], shortcuts=[], prompt=None):
 
 class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[], shortcuts={}):
+    def __init__(self, t, x, y, suggestions=[], shortcuts={}, default=""):
         self.x = x
         self.y = y
-        self.cursor = 0
-        self.s = ""
-        self.high_water = 0
+        self.s = default
+        self.cursor = len(self.s)
+        self.high_water = len(self.s)
         self.t = t
-        self.drafts = [""] + suggestions
+        self.drafts = [None] + suggestions
         self.current_draft = 0
         self.shortcuts = shortcuts
 
@@ -55,6 +56,13 @@ class Input(object):
         self.t.putchs(self.x, self.y, pad_to(self.high_water, self.s))
         x, y = self.t.advance(self.x, self.y, self.cursor)
         self.t.set_cursor(x, y)
+        paren_loc = self.paren_to_highlight()
+        if paren_loc is not None:
+            other_paren = utils.matched_paren(self.s, paren_loc)
+            if other_paren is not None:
+                for p in [paren_loc, other_paren]:
+                    x, y = self.t.advance(self.x, self.y, p)
+                    self.t.putch(x, y, self.s[p], termbox.BLACK, termbox.CYAN)
         self.t.refresh()
 
     def insert_ch(self, ch, n=None):
@@ -69,6 +77,13 @@ class Input(object):
         self.s = self.s[:n-1] + self.s[n:]
         if n <= self.cursor:
             self.cursor -= 1
+
+    def paren_to_highlight(self):
+        if self.cursor < len(self.s) and self.s[self.cursor] in "()":
+            return self.cursor
+        if self.cursor > 0 and self.s[self.cursor-1] in "()":
+            return self.cursor - 1
+        return None
 
     def poll(self):
         ch, key = self.t.poll()
@@ -88,6 +103,10 @@ class Input(object):
                 self.cursor += self.t.width
             elif self.current_draft < len(self.drafts) - 1:
                 self.move_to_draft(self.current_draft+1)
+        elif key == termbox.KEY_CTRL_R:
+            self.jump_to_paren(-1)
+        elif key == termbox.KEY_CTRL_K:
+            self.jump_to_paren(1)
         elif key == termbox.KEY_ENTER:
             return self.s
         elif key in self.shortcuts:
@@ -97,6 +116,14 @@ class Input(object):
             self.insert_ch(ch)
         self.refresh()
         return None
+
+    def jump_to_paren(self, d):
+        def to():
+            return self.cursor + d
+        while to() <= len(self.s) and to() >= 0:
+            self.cursor = to()
+            if self.cursor == 0 or self.s[self.cursor-1] == ")":
+                return
 
     def elicit(self):
         self.refresh()
@@ -124,15 +151,15 @@ class Terminal(object):
     def __exit__(self, *args):
         self.t.__exit__(*args)
 
-    def putch(self, x, y, ch):
-        self.t.change_cell(x, y, ord(ch), termbox.DEFAULT, termbox.DEFAULT)
+    def putch(self, x, y, ch, fg=termbox.DEFAULT, bg=termbox.DEFAULT):
+        if ch == "\n":
+            return (0, y+1)
+        else:
+            self.t.change_cell(x, y, ord(ch), fg, bg)
+            return self.advance(x, y)
 
     def print_ch(self, ch):
-        self.putch(self.x, self.y, ch)
-        self.move()
-
-    def move(self, n=1):
-        self.x, self.y = self.advance(self.x, self.y)
+        self.x, self.y = self.putch(self.x, self.y, ch)
 
     def advance(self, x, y, n=1):
         x += n
@@ -143,17 +170,14 @@ class Terminal(object):
 
     def putchs(self, x, y, chs):
         for ch in chs:
-            self.putch(x, y, ch)
-            x, y = self.advance(x, y)
+            x, y = self.putch(x, y, ch)
         return x, y
 
-    def print_line(self, line, new_line=True):
-        if new_line: self.new_line()
+    def print_line(self, line="", new_line=True):
+        if new_line:
+            self.x = 0
+            self.y += 1
         self.x, self.y = self.putchs(self.x, self.y, line)
-
-    def new_line(self):
-        self.x = 0
-        self.y += 1
 
     def clear(self):
         self.t.clear()

@@ -29,3 +29,32 @@ def elicit_input(observations, actions):
     lines = interleave(observations, [">>> {}".format(action) for action in actions])
     print("\n\n".join(lines))
     return raw_input("\n>>> ")
+
+def starts_with(p, s):
+    return len(s) >= len(p) and s[:len(p)] == p
+
+def pad_to(s, k):
+    return s + " " * (k - len(s))
+
+def matched_paren(s, k):
+    delim = s[k]
+    if delim == "(":
+        d = 1
+        closer = ")"
+    elif delim == ")":
+        d = -1
+        closer = "("
+    else:
+        raise ValueError
+    open_delims = 0
+    k = k
+    while True:
+        if s[k] == delim:
+            open_delims += 1
+        elif s[k] == closer:
+            open_delims -= 1
+        if open_delims == 0:
+            return k
+        k += d
+        if k < 0 or k >= len(s):
+            return None
