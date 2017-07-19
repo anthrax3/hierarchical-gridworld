@@ -153,21 +153,11 @@ class Translator(Env):
                     message = "syntax error: {}".format(s)
             elif translation is not None:
                 try:
-                    try:
-                        new_translator = translator.add_action(translation)
-                        def sub(arg):
-                            nonlocal new_translator
-                            if isinstance(arg, Message):
-                                result, new_translator = new_translator.run(arg)
-                                return result
-                            else:
-                                return arg
-                        translation = translation.transform_args(sub)
-                        result = translation.instantiate(translator.args)
-                        return result, new_translator
-                    except RecursionError:
-                        raise
-                        message = "stack overflow on {}".format(s)
+                    result = translation.instantiate(translator.args)
+                    return result, translator.add_action(translation)
+                except RecursionError:
+                    raise
+                    message = "stack overflow on {}".format(s)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
             else:
