@@ -110,51 +110,60 @@ class Implementer(Env):
                 except commands.BadCommand as e:
                     message = "{}: {}".format(e, s)
                 except RecursionError:
-                    raise
                     implementer = implementer.add_action(command).add_message(Message("stack overflow"))
 
 class Translator(Env):
     def display_message(self, i, m):
-        #sender = "A" if i % 2 == 0 else "B"
         sender = self.sources[i]
         return "{} >>> {}".format(sender, m)
 
     def display_action(self, i, a, debug=False):
-        #receiver = "B" if i % 2 == 0 else "A"
         receiver = self.targets[i]
         prefix = "{} <<< ".format(receiver)
         if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
         return "{}{}\n".format(prefix, a)
 
     def get_response(self, **kwargs):
-        #receiver = "B" if len(self.actions) % 2 == 0 else "A"
-        receiver = self.targets[-1]
-        prompt = "{} <<< ".format(receiver)
+        prompt = "  <<< "
         return get_response(self, prompt=prompt, kind="translate", **kwargs)
 
     def add_source_target(self, source, target):
         return self.copy(sources = self.sources + (source,), targets = self.targets + (target,))
 
-    def __init__(self, sources=(), targets=(), **kwargs):
+    def __init__(self, sender="A", receiver="B", sources=(), targets=(), **kwargs):
         self.sources = sources
         self.targets = targets
+        self.sender = sender
+        self.receiver = receiver
         return super().__init__(**kwargs)
 
-    def copy(self, sources=None, targets=None, **kwargs):
+    def copy(self, sources=None, targets=None, sender=None, receiver=None, **kwargs):
         if sources is None: sources=self.sources
         if targets is None: targets=self.targets
-        return super().copy(sources=sources, targets=targets, **kwargs)
+        if sender is None: sender=self.sender
+        if receiver is None: receiver=self.receiver
+        return super().copy(sources=sources, targets=targets, sender=sender, receiver=receiver, **kwargs)
 
-    def run(self, m, use_cache=True, source="*", target="*"):
-        translator = self.add_source_target(source, target).add_message(m)
+    def swap(self):
+        return self.copy(receiver=self.sender, sender=self.receiver)
+
+    def run(self, m, use_cache=True):
+        source = self.sender
+        target = self.receiver
+        translator = self.add_message(m).copy(sources=self.sources + (source,))
         message = None
         while True:
             s = translator.get_response(error_message=message, use_cache=use_cache)
             viewer = commands.parse_view(s)
             translation = commands.parse_message(s)
             fixer = commands.parse_fix(s)
+            replier = commands.parse_reply(s)
             if fixer is not None:
                 message = fixer.fix(translator)
+            elif replier is not None:
+                result = replier.message.instantiate(translator.args)
+                translator = translator.copy(targets=self.targets + (source,))
+                return None, result, translator.add_action(translation)
             elif viewer is not None:
                 try:
                     translator = viewer.view(translator)
@@ -164,9 +173,9 @@ class Translator(Env):
             elif translation is not None:
                 try:
                     result = translation.instantiate(translator.args)
-                    return result, translator.add_action(translation)
+                    translator = translator.copy(targets=self.targets + (target,))
+                    return result, None, translator.add_action(translation)
                 except RecursionError:
-                    raise
                     message = "stack overflow on {}".format(s)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
@@ -176,20 +185,48 @@ class Translator(Env):
 def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=float("inf"), invisible_budget=float("inf")):
     translator = Translator(context=context) if translator is None else translator
     receiver = Implementer(context=context) if receiver is None else receiver
-    builtin_result = builtin_handler(Q)
-    if builtin_result is not None:
-        translator = translator.add_message(Q).add_action(Q)
-        translator = translator.add_message(builtin_result).add_action(builtin_result)
-        implementer = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
-        return messages.addressed_message(builtin_result, translator=translator, implementer=implementer, budget=nominal_budget), 1
-    Q, translator = translator.run(Q, source="A", target="B")
-    if sender is not None:
-        Q = messages.addressed_message(Q, implementer=sender, translator=translator, question=True, budget=nominal_budget)
-    A, receiver, budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget))
-    if not passes_through_translation(A):
-        A, translator = translator.run(A, source="B", target="A")
-    addressed_A = messages.addressed_message(A, implementer=receiver, translator=translator, budget=nominal_budget)
-    return addressed_A, budget_consumed
+    budget_consumed = 0
+    def address(m, i, t):
+        return messages.addressed_message(m, implementer=i, translator=t, budget=nominal_budget)
+    Q, A, translator = translator.run(Q)
+    translator = translator.swap()
+    while True:
+        if A is not None:
+            A = messages.addressed_message(A, implementer=receiver, translator=translator.swap(), budget=nominal_budget, question=False)
+            return A, budget_consumed
+        if Q is not None:
+            builtin_result = builtin_handler(Q)
+            if builtin_result is not None:
+                receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
+                A = builtin_result
+            else:
+                Q = messages.addressed_message(Q, implementer=sender, translator=translator, budget=nominal_budget, question=True)
+                A, receiver, step_budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget-budget_consumed))
+                budget_consumed += step_budget_consumed
+                A, Q, translator = translator.run(A)
+    #builtin_result = builtin_handler(Q)
+    #budget_consumed = 1
+    #if builtin_result is not None:
+    #    translator = translator.add_message(Q).add_action(Q).swap()
+    #    translator = translator.add_message(builtin_result).add_action(builtin_result).swap()
+    #    receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
+    #    return address(builtin_result, receiver, translator), budget_consumed
+    #Q, A, translator = translator.run(Q)
+    #while True:
+    #    if A is not None:
+    #        return address(A, receiver, translator), 1
+    #translator = translator.swap()
+    #Q = address(Q, sender, translator)
+    #A, receiver, budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget))
+    #if passes_through_translation(A):
+    #    translator = translator.add_message(A).add_action(A)
+    #else:
+    #    A, Q, translator = translator.run(A)
+    #    if Q is not None:
+    #        budget = invisible_budget - budget_consumed
+    #        return ask_Q(Q, context, sender, receiver, translator, nominal_budget=nominal_budget, invisible_budget=budget)
+    #translator = translator.swap()
+    #return address(A, receiver, translator), budget_consumed
 
 def passes_through_translation(A):
     if A.matches("<<budget exhausted>>"):

@@ -24,9 +24,6 @@ class Placeholder(Command):
         self.s = s
         pass
 
-    def execute(self, env, budget):
-        raise Exception("Can't implement placeholder command")
-
     def __str__(self):
         return self.s
 
@@ -73,7 +70,6 @@ class Ask(Command):
             return None, env.add_message(response), budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
-
 
 class View(Command):
 
@@ -164,6 +160,8 @@ def parse(t, string):
     except pp.ParseException:
         return None
 
+def parse_reply(s):
+    return parse(reply_command, s)
 
 def parse_command(s):
     return parse(command, s)
