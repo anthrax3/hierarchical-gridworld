@@ -180,15 +180,21 @@ def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=flo
     if builtin_result is not None:
         translator = translator.add_message(Q).add_action(Q)
         translator = translator.add_message(builtin_result).add_action(builtin_result)
-        implementer = receiver.add_message(Q).add_action(commands.Placeholder("response from built-in function"))
+        implementer = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
         return messages.addressed_message(builtin_result, translator=translator, implementer=implementer, budget=nominal_budget), 1
-    translated_Q, translator = translator.run(Q, source="A", target="B")
+    Q, translator = translator.run(Q, source="A", target="B")
     if sender is not None:
-        addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True, budget=nominal_budget)
-    A, receiver, budget_consumed = receiver.run(addressed_Q, budget=min(nominal_budget, invisible_budget))
-    translated_A, translator = translator.run(A, source="B", target="A")
-    addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator, budget=nominal_budget)
+        Q = messages.addressed_message(Q, implementer=sender, translator=translator, question=True, budget=nominal_budget)
+    A, receiver, budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget))
+    if not passes_through_translation(A):
+        A, translator = translator.run(A, source="B", target="A")
+    addressed_A = messages.addressed_message(A, implementer=receiver, translator=translator, budget=nominal_budget)
     return addressed_A, budget_consumed
+
+def passes_through_translation(A):
+    if A.matches("<<budget exhausted>>"):
+        return True
+    return False
 
 def builtin_handler(Q):
     if (Q.matches("what cell contains the agent in world []?")
