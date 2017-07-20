@@ -7,20 +7,22 @@ import term
 import suggestions
 
 class Env(object):
-    def __init__(self, context=None, messages=(), actions=(), args=(), history=()):
+    def __init__(self, context=None, messages=(), actions=(), args=(), history=(), responses=()):
         self.messages = messages
         self.actions = actions
         self.context = context
         self.args = args
         self.history = history
+        self.responses = responses
 
-    def copy(self, messages=None, actions=None, context=None, args=None, history=None, **kwargs):
+    def copy(self, messages=None, actions=None, context=None, args=None, history=None, responses=None, **kwargs):
         if messages is None: messages = self.messages
         if actions is None: actions = self.actions
         if context is None: context = self.context
         if args is None: args = self.args
         if history is None: history = self.history
-        return self.__class__(messages=messages, actions=actions, context=context, args=args, history=history, **kwargs)
+        if responses is None: responses = self.responses
+        return self.__class__(messages=messages, actions=actions, context=context, args=args, history=history, responses=responses, **kwargs)
 
     def instantiate_message(self, m):
         new_env_args = self.args
@@ -37,8 +39,10 @@ class Env(object):
         new_m, new_env = self.instantiate_message(m)
         return new_env.copy(messages = self.messages + (new_m,))
 
-    def add_action(self, a):
-        return self.copy(actions=self.actions + (a,), history=self.history + (self,))
+    def add_action(self, a, s=None):
+        if s is None:
+            s = str(a)
+        return self.copy(actions=self.actions + (a,), history=self.history + (self,), responses=self.responses + (s,))
 
     def get_lines(self, debug=False):
         message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
@@ -60,7 +64,7 @@ class Env(object):
                 try:
                     n = int(n)
                     if n >= 0 and n < len(self.actions):
-                        old = "{}".format(self.actions[n])
+                        old = self.responses[n]
                         message = "previously responded '{}'".format(old)
                         self.history[n].get_response(error_message=message, default=old)
                         return n
