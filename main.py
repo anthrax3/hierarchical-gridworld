@@ -89,10 +89,12 @@ class Implementer(Env):
         budget_consumed = 1 #the cost of merely asking a question
         while True:
             if budget_consumed >= budget:
-                return Message("budget exhausted"), implementer.add_action(commands.Placeholder("budget exhausted")), budget_consumed
+                return Message("<<budget exhausted>>"), implementer.add_action(commands.Placeholder("<<budget exhausted>>")), budget_consumed
             s = implementer.get_response(error_message=message, use_cache=use_cache)
             command = commands.parse_command(s)
-            if command is None:
+            if s == "help":
+                message = commands.help_message
+            elif command is None:
                 message = "syntax error: {}".format(s)
             else:
                 message = None

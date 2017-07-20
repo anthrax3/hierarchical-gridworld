@@ -225,3 +225,25 @@ more_command = raw("more")
 more_command.setParseAction(lambda xs : More())
 
 command = ask_command | reply_command | view_command | fix_command | more_command
+
+#-----help message
+
+help_message = """Valid commands:
+
+"ask Q", e.g. "ask what is one plus one?"
+"reply A", e.g. "reply it is two"
+"view n", e.g. "view 0", expand the pointer #n
+"more", rerun the previous query with a larger budget
+"fix", change one of the previous actios in this context
+
+Valid messages: text interspersed with pointers such as "#1",
+sub-messages enclosed in parentheses such as "(one more than #2)",
+or channels such as "@0"
+
+Built in commands:
+
+ask what cell contains the agent in world #n?
+ask what is in cell #n in world #m?
+ask move the agent n/e/s/w in world #n?
+ask what cell is directly n/e/s/w of cell #m?
+ask is cell #n n/e/s/w of cell #m?"""
