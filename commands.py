@@ -100,7 +100,7 @@ class View(Command):
             elif isinstance(m, Message):
                 return m.transform_args_recursive(sub)
             elif isinstance(m, Ask):
-                return Ask(message=sub(m.message), recipient=m.recipient)
+                return Ask(message=sub(m.message), recipient=sub(m.recipient))
             elif isinstance(m, Reply):
                 return Reply(message=sub(m.message))
             else:
