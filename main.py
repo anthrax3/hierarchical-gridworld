@@ -170,9 +170,6 @@ is cell #n n/e/s/w of cell #m?"""
         prompt = "  <<< "
         return get_response(self, prompt=prompt, kind="translate", **kwargs)
 
-    def add_source_target(self, source, target):
-        return self.copy(sources = self.sources + (source,), targets = self.targets + (target,))
-
     def __init__(self, sender="A", receiver="B", sources=(), targets=(), **kwargs):
         self.sources = sources
         self.targets = targets
@@ -187,13 +184,19 @@ is cell #n n/e/s/w of cell #m?"""
         if receiver is None: receiver=self.receiver
         return super().copy(sources=sources, targets=targets, sender=sender, receiver=receiver, **kwargs)
 
+    def add_source(self, source=None):
+        if source is None: source = self.sender
+        return self.copy(sources=self.sources + (source,))
+
+    def add_target(self, target=None):
+        if target is None: target = self.receiver
+        return self.copy(targets=self.targets + (target,))
+
     def swap(self):
         return self.copy(receiver=self.sender, sender=self.receiver)
 
     def run(self, m, use_cache=True):
-        source = self.sender
-        target = self.receiver
-        translator = self.add_message(m).copy(sources=self.sources + (source,))
+        translator = self.add_message(m).add_source()
         message = None
         while True:
             s = translator.get_response(error_message=message, use_cache=use_cache)
@@ -207,7 +210,7 @@ is cell #n n/e/s/w of cell #m?"""
                 message = fixer.fix(translator)
             elif replier is not None:
                 result = replier.message.instantiate(translator.args)
-                translator = translator.copy(targets=self.targets + (source,))
+                translator = translator.add_target(self.sender)
                 return None, result, translator.add_action(translation)
             elif viewer is not None:
                 try:
@@ -218,7 +221,7 @@ is cell #n n/e/s/w of cell #m?"""
             elif translation is not None:
                 try:
                     result = translation.instantiate(translator.args)
-                    translator = translator.copy(targets=self.targets + (target,))
+                    translator = translator.add_target()
                     return result, None, translator.add_action(translation)
                 except RecursionError:
                     message = "stack overflow on {}".format(s)
@@ -241,13 +244,17 @@ def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=flo
             return A, budget_consumed
         if Q is not None:
             builtin_result = builtin_handler(Q)
+            Q = messages.addressed_message(Q, implementer=sender, translator=translator, budget=nominal_budget, question=True)
             if builtin_result is not None:
                 receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
                 A = builtin_result
             else:
-                Q = messages.addressed_message(Q, implementer=sender, translator=translator, budget=nominal_budget, question=True)
                 A, receiver, step_budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget-budget_consumed))
                 budget_consumed += step_budget_consumed
+            if passes_through_translation(A):
+                Q = None
+                translator = translator.add_message(A).add_action(A).add_source().add_target()
+            else:
                 A, Q, translator = translator.run(A)
 
 def passes_through_translation(A):
