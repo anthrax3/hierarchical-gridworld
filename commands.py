@@ -123,6 +123,29 @@ class More(Command):
         new_action = last_action.more()
         return new_action.execute(env.history[-1], budget)
 
+class Replay(Command):
+
+    def __str__(self):
+        return "replay"
+
+    def execute(self, env, budget):
+        last_action = env.actions[-1]
+        if not isinstance(last_action, Ask):
+            raise BadCommand("replay can only follow an action")
+        t = env.context.terminal
+        t.clear()
+        for line in env.get_lines():
+            t.print_line(line)
+        t.print_line("replay the last line? [type 'y' or 'n']")
+        t.set_cursor(t.x, t.y)
+        t.refresh()
+        while True:
+            ch, key = t.poll()
+            if ch == "y":
+                return last_action.execute(env.history[-1], budget)
+            if ch == "n":
+                raise BadCommand("cancelled")
+
 class Reply(Command):
 
     def __init__(self, message):
@@ -222,4 +245,7 @@ view_command.setParseAction(lambda xs : View(xs[0]))
 more_command = raw("more")
 more_command.setParseAction(lambda xs : More())
 
-command = ask_command | reply_command | view_command | fix_command | more_command
+replay_command = raw("replay")
+replay_command.setParseAction(lambda xs : Replay())
+
+command = ask_command | reply_command | view_command | fix_command | more_command | replay_command

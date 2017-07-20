@@ -82,6 +82,7 @@ class Implementer(Env):
 "view n", e.g. "view 0", expand the pointer #n
 "more", rerun the previous query with a larger budget
 "fix", change one of the previous actios in this context
+"replay", rerun the previous query to reflect fixes
 
 Valid messages: text interspersed with pointers such as "#1",
 sub-messages enclosed in parentheses such as "(one more than #2)",
