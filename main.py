@@ -83,10 +83,13 @@ class Implementer(Env):
     def get_response(self, **kwargs):
         return get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
-    def run(self, m, use_cache=True):
+    def run(self, m, use_cache=True, budget=float('inf')):
         implementer = self.add_message(m)
         message = None
+        budget_consumed = 1 #the cost of merely asking a question
         while True:
+            if budget_consumed >= budget:
+                return Message("budget exhausted"), implementer.add_action(commands.Placeholder("budget exhausted")), budget_consumed
             s = implementer.get_response(error_message=message, use_cache=use_cache)
             command = commands.parse_command(s)
             if command is None:
@@ -94,11 +97,12 @@ class Implementer(Env):
             else:
                 message = None
                 try:
-                    retval, implementer = command.execute(implementer)
+                    retval, implementer, step_budget_consumed = command.execute(implementer, budget - budget_consumed)
+                    budget_consumed += step_budget_consumed
                     if retval is not None:
-                        return retval, implementer
-                except commands.BadCommand:
-                    message = "syntax error: {}".format(s)
+                        return retval, implementer, budget_consumed
+                except commands.BadCommand as e:
+                    message = "{}: {}".format(e, s)
                 except RecursionError:
                     raise
                     implementer = implementer.add_action(command).add_message(Message("stack overflow"))
@@ -149,8 +153,8 @@ class Translator(Env):
                 try:
                     translator = viewer.view(translator)
                     message = None
-                except commands.BadCommand:
-                    message = "syntax error: {}".format(s)
+                except commands.BadCommand as e:
+                    message = "{}: {}".format(e, s)
             elif translation is not None:
                 try:
                     result = translation.instantiate(translator.args)
@@ -163,22 +167,22 @@ class Translator(Env):
             else:
                 message = "syntax error: {}".format(s)
 
-def ask_Q(Q, context, sender, receiver=None, translator=None):
+def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=float("inf"), invisible_budget=float("inf")):
     translator = Translator(context=context) if translator is None else translator
     receiver = Implementer(context=context) if receiver is None else receiver
     builtin_result = builtin_handler(Q)
     if builtin_result is not None:
         translator = translator.add_message(Q).add_action(Q)
         translator = translator.add_message(builtin_result).add_action(builtin_result)
-        implementer = receiver.add_message(Q).add_action(commands.Automatic())
-        return messages.addressed_message(builtin_result, translator=translator, implementer=implementer)
+        implementer = receiver.add_message(Q).add_action(commands.Placeholder("response from built-in function"))
+        return messages.addressed_message(builtin_result, translator=translator, implementer=implementer, budget=nominal_budget), 1
     translated_Q, translator = translator.run(Q, source="A", target="B")
     if sender is not None:
-        addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True)
-    A, receiver = receiver.run(addressed_Q)
+        addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True, budget=nominal_budget)
+    A, receiver, budget_consumed = receiver.run(addressed_Q, budget=min(nominal_budget, invisible_budget))
     translated_A, translator = translator.run(A, source="B", target="A")
-    addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator)
-    return addressed_A
+    addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator, budget=nominal_budget)
+    return addressed_A, budget_consumed
 
 def builtin_handler(Q):
     if (Q.matches("what cell contains the agent in world []?")

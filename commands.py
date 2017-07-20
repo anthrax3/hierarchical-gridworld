@@ -5,22 +5,37 @@ import messages
 import main
 
 class BadCommand(Exception):
-    pass
+    def __init__(self, explanation):
+        self.explanation = explanation
+    def __str__(self):
+        return self.explanation
 
 class Command(object):
 
-    def execute(self, env):
+    def execute(self, env, budget):
         raise NotImplemented()
 
     def messages(self):
         return []
 
-class Automatic(Command):
+class Placeholder(Command):
+
+    def __init__(self, s):
+        self.s = s
+        pass
+
+    def execute(self, env, budget):
+        raise Exception("Can't implement placeholder command")
+
+    def __str__(self):
+        return self.s
+
+class BudgetExhausted(Command):
 
     def __init__(self):
         pass
 
-    def execute(self, env):
+    def execute(self, env, budget):
         raise Exception("Can't implement automatic command")
 
     def __str__(self):
@@ -28,9 +43,10 @@ class Automatic(Command):
 
 class Ask(Command):
 
-    def __init__(self, message, recipient=None):
+    def __init__(self, message, recipient=None, budget=4):
         self.message = message
         self.recipient = recipient
+        self.budget = budget
 
     def __str__(self):
         return "ask{} {}".format("" if self.recipient is None else self.recipient, self.message)
@@ -38,7 +54,10 @@ class Ask(Command):
     def messages(self):
         return [self.message]
 
-    def execute(self, env):
+    def more(self):
+        return Ask(message=self.message, recipient=self.recipient, budget =4*self.budget)
+
+    def execute(self, env, budget):
         try:
             if self.recipient is not None:
                 channel = self.recipient.instantiate(env.args)
@@ -48,23 +67,26 @@ class Ask(Command):
                 translator = receiver = None
             message = self.message.instantiate(env.args)
             env = env.add_action(self)
-            response = main.ask_Q(message, sender=env, context=env.context, receiver=receiver, translator=translator)
-            return None, env.add_message(response)
+            response, budget_consumed = main.ask_Q(message,
+                    sender=env, context=env.context, receiver=receiver, translator=translator,
+                    nominal_budget=self.budget, invisible_budget=budget)
+            return None, env.add_message(response), budget_consumed
         except messages.BadInstantiation:
-            raise BadCommand()
+            raise BadCommand("invalid reference")
+
 
 class View(Command):
 
     def __init__(self, n):
         self.n = n 
 
-    def execute(self, env):
-        return None, self.view(env)
+    def execute(self, env, budget):
+        return None, self.view(env), 0
 
     def view(self, env):
         n = self.n
         if n < 0 or n >= len(env.args):
-            raise BadCommand()
+            raise BadCommand("invalid index")
         new_m, env = env.instantiate_message(env.args[n])
         def sub(m):
             if isinstance(m, Pointer):
@@ -93,6 +115,18 @@ class View(Command):
     def __str__(self):
         return "view {}".format(self.n)
 
+class More(Command):
+
+    def __str__(self):
+        return "more"
+
+    def execute(self, env, budget):
+        last_action = env.actions[-1]
+        if not isinstance(last_action, Ask):
+            raise BadCommand("more can only follow an action")
+        new_action = last_action.more()
+        return new_action.execute(env.history[-1], budget)
+
 class Reply(Command):
 
     def __init__(self, message):
@@ -104,19 +138,19 @@ class Reply(Command):
     def messages(self):
         return [self.message]
 
-    def execute(self, env):
+    def execute(self, env, budget):
         try:
-            return self.message.instantiate(env.args), env.add_action(self)
+            return self.message.instantiate(env.args), env.add_action(self), 0
         except messages.BadInstantiation:
-            raise BadCommand()
+            raise BadCommand("invalid reference")
 
 class Fix(Command):
 
     def __str__(self):
         return "fix"
 
-    def execute(self, env):
-        return None, env.add_action(self).add_message(Message(self.fix(env)))
+    def execute(self, env, budget):
+        return None, env.add_action(self).add_message(Message(self.fix(env))), 0
     
     def fix(self, env):
         change = env.fix()
@@ -187,4 +221,7 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 view_command = raw("view") + pp.Empty() + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-command = ask_command | reply_command | view_command | fix_command
+more_command = raw("more")
+more_command.setParseAction(lambda xs : More())
+
+command = ask_command | reply_command | view_command | fix_command | more_command

@@ -124,8 +124,10 @@ class Channel(Referent):
     def instantiate(self, xs):
         raise Exception("should not try to instantiate a channel")
 
-def addressed_message(message, implementer, translator, question=False):
-    return Message("{} from []: ".format("Q" if question else "A"), Channel(implementer=implementer, translator=translator)) + message
+def addressed_message(message, implementer, translator, question=False, budget=float('inf')):
+    budget_str = "" if budget == float('inf') else ", budget {}".format(budget)
+    channel = Channel(implementer=implementer, translator=translator)
+    return Message("{} from []{}: ".format("Q" if question else "A", budget_str), channel) + message
 
 def strip_prefix(message, sep=": "):
     for i, t in enumerate(message.text):
