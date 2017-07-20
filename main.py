@@ -74,6 +74,27 @@ class Env(object):
                     t.print_line("please type 'none' or an integer")
 
 class Implementer(Env):
+
+    help_message = """Valid commands:
+
+"ask Q", e.g. "ask what is one plus one?"
+"reply A", e.g. "reply it is two"
+"view n", e.g. "view 0", expand the pointer #n
+"more", rerun the previous query with a larger budget
+"fix", change one of the previous actios in this context
+
+Valid messages: text interspersed with pointers such as "#1",
+sub-messages enclosed in parentheses such as "(one more than #2)",
+or channels such as "@0"
+
+Built in commands:
+
+ask what cell contains the agent in world #n?
+ask what is in cell #n in world #m?
+ask move the agent n/e/s/w in world #n?
+ask what cell is directly n/e/s/w of cell #m?
+ask is cell #n n/e/s/w of cell #m?"""
+
     @staticmethod
     def display_message(i, m):
         return ">>> {}\n".format(m)
@@ -87,6 +108,7 @@ class Implementer(Env):
     def get_response(self, **kwargs):
         return get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
+
     def run(self, m, use_cache=True, budget=float('inf')):
         implementer = self.add_message(m)
         message = None
@@ -97,7 +119,7 @@ class Implementer(Env):
             s = implementer.get_response(error_message=message, use_cache=use_cache)
             command = commands.parse_command(s)
             if s == "help":
-                message = commands.help_message
+                message = self.help_message
             elif command is None:
                 message = "syntax error: {}".format(s)
             else:
@@ -113,6 +135,27 @@ class Implementer(Env):
                     implementer = implementer.add_action(command).add_message(Message("stack overflow"))
 
 class Translator(Env):
+
+    help_message = """Enter a message to pass it through
+
+Valid commands:
+
+"reply A", e.g. "reply I don't know", returns A to the sender
+"view n", e.g. "view 0", expand the pointer #n
+"fix", change one of the previous actions in this context
+
+Valid messages: text interspersed with pointers such as "#1",
+sub-messages enclosed in parentheses such as "(one more than #2)",
+or channels such as "@0"
+
+Some messages will be handled automatically:
+
+what cell contains the agent in world #n?
+what is in cell #n in world #m?
+move the agent n/e/s/w in world #n?
+what cell is directly n/e/s/w of cell #m?
+is cell #n n/e/s/w of cell #m?"""
+
     def display_message(self, i, m):
         sender = self.sources[i]
         return "{} >>> {}".format(sender, m)
@@ -158,7 +201,9 @@ class Translator(Env):
             translation = commands.parse_message(s)
             fixer = commands.parse_fix(s)
             replier = commands.parse_reply(s)
-            if fixer is not None:
+            if s == "help":
+                message = self.help_message
+            elif fixer is not None:
                 message = fixer.fix(translator)
             elif replier is not None:
                 result = replier.message.instantiate(translator.args)
@@ -204,29 +249,6 @@ def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=flo
                 A, receiver, step_budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget-budget_consumed))
                 budget_consumed += step_budget_consumed
                 A, Q, translator = translator.run(A)
-    #builtin_result = builtin_handler(Q)
-    #budget_consumed = 1
-    #if builtin_result is not None:
-    #    translator = translator.add_message(Q).add_action(Q).swap()
-    #    translator = translator.add_message(builtin_result).add_action(builtin_result).swap()
-    #    receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
-    #    return address(builtin_result, receiver, translator), budget_consumed
-    #Q, A, translator = translator.run(Q)
-    #while True:
-    #    if A is not None:
-    #        return address(A, receiver, translator), 1
-    #translator = translator.swap()
-    #Q = address(Q, sender, translator)
-    #A, receiver, budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget))
-    #if passes_through_translation(A):
-    #    translator = translator.add_message(A).add_action(A)
-    #else:
-    #    A, Q, translator = translator.run(A)
-    #    if Q is not None:
-    #        budget = invisible_budget - budget_consumed
-    #        return ask_Q(Q, context, sender, receiver, translator, nominal_budget=nominal_budget, invisible_budget=budget)
-    #translator = translator.swap()
-    #return address(A, receiver, translator), budget_consumed
 
 def passes_through_translation(A):
     if A.matches("<<budget exhausted>>"):
