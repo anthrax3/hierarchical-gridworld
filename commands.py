@@ -55,6 +55,8 @@ class Ask(Command):
         return [self.message]
 
     def execute(self, env, budget):
+        if len(env.actions) >= 4:
+            raise BadCommand("no free registers (use clear or combine instead)")
         nominal_budget = round_budget(budget) if self.budget is None else self.budget
         try:
             if self.recipient is not None:
@@ -123,9 +125,47 @@ class Say(Command):
         return [self.message]
 
     def execute(self, env, budget):
-        env = env.add_action(self)
-        env = env.add_message(self.message)
-        return None, env, 0
+        try:
+            env = env.add_action(self).add_message(self.message)
+            return None, env, 0
+        except messages.BadInstantiation:
+            raise BadCommand("invalid reference")
+
+class Clear(Command):
+
+    def __init__(self, n):
+        self.n = n
+
+    def __str__(self):
+        return "clear {}".format(self.n)
+
+    def execute(self, env, budget):
+        return None, env.delete(self.n), 0
+
+class Combine(Command):
+
+    def __init__(self, n, m, message):
+        self.n = n
+        self.m = m
+        self.message = message
+
+    def messages(self):
+        return [self.message]
+
+    def __str__(self):
+        return "clear {} and {} into {}".format(self.n, self.m, self.message)
+
+    def execute(self, env, budget):
+        try:
+            message = self.message.instantiate(env.args)
+            _, env, _ = Say(self.message).execute(env, budget)
+            m = self.m
+            env = env.delete(self.n)
+            if self.n < m: m -= 1
+            env = env.delete(m)
+            return None, env, 0
+        except messages.BadInstantiation:
+            raise BadCommand("invalid reference")
 
 class Replay(Command):
 
@@ -162,6 +202,8 @@ class Reply(Command):
         return [self.message]
 
     def execute(self, env, budget):
+        if len(env.actions) >= 4:
+            raise BadCommand("no free registers (use clear or combine instead)")
         try:
             return self.message.instantiate(env.args), env.add_action(self), 0
         except messages.BadInstantiation:
@@ -247,6 +289,12 @@ fix_command.setParseAction(lambda xs : Fix())
 reply_command = (raw("reply")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
+clear_command = (raw("clear")) + pp.Empty() + number
+clear_command.setParseAction(lambda xs : Clear(xs[0]))
+
+combine_command = (raw("combine")) + pp.Empty() + number + pp.Empty() + raw("and") + pp.Empty() + number + pp.Empty() + raw("into") + pp.Empty() + message
+combine_command.setParseAction(lambda xs : Combine(xs[0], xs[1], xs[2]))
+
 say_command = (raw("say")) + pp.Empty() + message
 say_command.setParseAction(lambda xs : Say(xs[0]))
 
@@ -259,4 +307,4 @@ view_command.setParseAction(lambda xs : View(xs[0]))
 replay_command = raw("replay")
 replay_command.setParseAction(lambda xs : Replay())
 
-command = ask_command | reply_command | say_command | view_command | fix_command | replay_command #| more_command
+command = ask_command | reply_command | say_command | view_command | fix_command | replay_command | clear_command | combine_command

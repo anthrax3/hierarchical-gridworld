@@ -135,7 +135,9 @@ ask is cell #n n/e/s/w of cell #m?"""
     @staticmethod
     def display_action(i, a, debug=False):
         prefix = "<<< "
-        if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
+        #if debug:
+        if True:
+            prefix = utils.pad_to("{}.".format(i), len(prefix))
         return "{}{}".format(prefix, a)
 
     def get_response(self, **kwargs):
@@ -168,10 +170,10 @@ ask is cell #n n/e/s/w of cell #m?"""
         message = None
         budget_consumed = 1 #the cost of merely asking a question
         while True:
-            while len(implementer.actions) > 4:
-                n = implementer.pick_action("which register to clear?")
-                if n is not None:
-                    implementer = implementer.delete(n)
+            #while len(implementer.actions) > 4:
+            #    n = implementer.pick_action("which register to clear?")
+            #    if n is not None:
+            #        implementer = implementer.delete(n)
             if budget_consumed >= budget:
                 return Message("<<budget exhausted>>"), implementer.add_action(commands.Placeholder("<<budget exhausted>>")), budget_consumed
             s = implementer.get_response(error_message=message, use_cache=use_cache)
