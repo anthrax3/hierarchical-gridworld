@@ -39,6 +39,33 @@ class Env(object):
         new_m, new_env = self.instantiate_message(m)
         return new_env.copy(messages = self.messages + (new_m,))
 
+    def delete_arg(self, n, new_m=None):
+        def sub(m):
+            if isinstance(m, Pointer):
+                if m.n < n:
+                    return m
+                elif m.n == n:
+                    assert new_m is not None
+                    return sub(new_m)
+                elif m.n > n:
+                    return Pointer(m.n - 1, m.type)
+            elif isinstance(m, Message):
+                return m.transform_args_recursive(sub)
+            elif isinstance(m, commands.Ask):
+                return commands.Ask(message=sub(m.message), recipient=sub(m.recipient), budget=m.budget)
+            elif isinstance(m, commands.Reply):
+                return commands.Reply(message=sub(m.message))
+            elif isinstance(m, commands.Say):
+                return commands.Say(message=sub(m.message))
+            else:
+                return m
+        return self.copy(
+            messages=tuple(sub(m) for m in self.messages),
+            actions=tuple(sub(a) for a in self.actions),
+            args=self.args[:n] + self.args[n+1:]
+        )
+
+
     def add_action(self, a, s=None):
         if s is None:
             s = str(a)
@@ -50,6 +77,14 @@ class Env(object):
         return utils.interleave(message_lines, action_lines)
 
     def fix(self):
+        n = self.pick_action("which of these choices do you want to change?")
+        if n is not None:
+            old = self.responses[n]
+            message = "previously responded '{}'".format(old)
+            self.history[n].get_response(error_message=message, default=old)
+        return n
+
+    def pick_action(self, prompt):
         t = self.context.terminal
         t.clear()
         lines = self.get_lines(debug=True)
@@ -57,16 +92,13 @@ class Env(object):
             t.print_line(line)
         done = False
         while not done:
-            n = term.get_input(t, prompt="which of these choices do you want to change? ")
+            n = term.get_input(t, prompt=prompt + " ")
             if n == "none":
                 return None
             else:
                 try:
                     n = int(n)
                     if n >= 0 and n < len(self.actions):
-                        old = self.responses[n]
-                        message = "previously responded '{}'".format(old)
-                        self.history[n].get_response(error_message=message, default=old)
                         return n
                     else:
                         t.print_line("please enter an integer between 0 and {}".format(len(self.actions) - 1))
@@ -109,20 +141,52 @@ ask is cell #n n/e/s/w of cell #m?"""
     def get_response(self, **kwargs):
         return get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
+    def delete(self, n):
+        def cut(x, m): return x[:m] + x[m+1:]
+        result = self.copy(
+                messages=cut(self.messages, n+1),
+                actions=cut(self.actions, n),
+                responses=cut(self.responses, n),
+                history=cut(self.history, n),
+            )
+        in_use =  {k:False for k in range(len(self.args))}
+        def note_used(x):
+            if isinstance(x, Pointer): in_use[x.n] = True
+            return x
+        for m in result.messages:
+            m.transform_args_recursive(note_used)
+        for a in result.actions:
+            for m in a.messages():
+                m.transform_args_recursive(note_used)
+        for k in reversed(list(range(len(self.args)))):
+            if not in_use[k]:
+                result = result.delete_arg(k)
+        return result
 
     def run(self, m, use_cache=True, budget=float('inf')):
         implementer = self.add_message(m)
         message = None
         budget_consumed = 1 #the cost of merely asking a question
         while True:
+            while len(implementer.actions) > 4:
+                n = implementer.pick_action("which register to clear?")
+                if n is not None:
+                    implementer = implementer.delete(n)
             if budget_consumed >= budget:
                 return Message("<<budget exhausted>>"), implementer.add_action(commands.Placeholder("<<budget exhausted>>")), budget_consumed
             s = implementer.get_response(error_message=message, use_cache=use_cache)
             command = commands.parse_command(s)
             if s == "help":
                 message = self.help_message
+            elif s == "fix":
+                n = implementer.fix()
+                if n is None:
+                    messsage = "fix was aborted"
+                else:
+                    message = "action {} was changed".format(n)
             elif command is None:
                 message = "syntax error: {}".format(s)
+
             else:
                 message = None
                 try:

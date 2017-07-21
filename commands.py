@@ -92,28 +92,7 @@ class View(Command):
         if n < 0 or n >= len(env.args):
             raise BadCommand("invalid index")
         new_m, env = env.instantiate_message(env.args[n])
-        def sub(m):
-            if isinstance(m, Pointer):
-                if m.n < n:
-                    return m
-                elif m.n == n:
-                    return sub(new_m)
-                elif m.n > n:
-                    return Pointer(m.n - 1, m.type)
-                return new_m if pointer.n == n else m
-            elif isinstance(m, Message):
-                return m.transform_args_recursive(sub)
-            elif isinstance(m, Ask):
-                return Ask(message=sub(m.message), recipient=sub(m.recipient))
-            elif isinstance(m, Reply):
-                return Reply(message=sub(m.message))
-            else:
-                return m
-        return env.copy(
-            messages=tuple(sub(m) for m in env.messages),
-            actions=tuple(sub(a) for a in env.actions),
-            args=env.args[:n] + env.args[n+1:]
-        )
+        return env.delete_arg(n, new_m)
 
 
     def __str__(self):
@@ -167,7 +146,7 @@ class Replay(Command):
         while True:
             ch, key = t.poll()
             if ch == "y":
-                return last_action.execute(env.history[-1], budget)
+                return None, env.history[-1], 0
             if ch == "n":
                 raise BadCommand("cancelled")
 
