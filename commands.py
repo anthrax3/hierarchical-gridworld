@@ -41,24 +41,21 @@ class BudgetExhausted(Command):
 
 class Ask(Command):
 
-    def __init__(self, message, recipient=None, budget=4):
+    def __init__(self, message, recipient=None, budget=None):
         self.message = message
         self.recipient = recipient
         self.budget = budget
 
     def __str__(self):
         recipient_str = "" if self.recipient is None else str(self.recipient)
-        budget_str = "$" if self.budget is None else ""
-        return "ask{}{} {}".format(recipient_str, budget_str, self.message)
+        budget_str = "" if self.budget is None else "${}".format(self.budget)
+        return "ask{} {}".format(recipient_str, self.message)
 
     def messages(self):
         return [self.message]
 
-    def more(self):
-        return Ask(message=self.message, recipient=self.recipient, budget=4*self.budget)
-
     def execute(self, env, budget):
-        nominal_budget = 4**round(log(budget) / log(4)) if self.budget is None else self.budget
+        nominal_budget = round_budget(budget) if self.budget is None else self.budget
         try:
             if self.recipient is not None:
                 channel = self.recipient.instantiate(env.args)
@@ -74,6 +71,13 @@ class Ask(Command):
             return None, env.add_message(response), budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
+
+def round_budget(x):
+    if x == float('inf'):
+        return float('inf')
+    if x <= 10:
+        return 10
+    return 10**int(log(x) / log(10))
 
 class View(Command):
 
@@ -115,20 +119,19 @@ class View(Command):
     def __str__(self):
         return "view {}".format(self.n)
 
-class More(Command):
-
-    def __str__(self):
-        return "more"
-
-    def execute(self, env, budget):
-        last_action = env.actions[-1]
-        if not isinstance(last_action, Ask):
-            raise BadCommand("more can only follow an action")
-        if last_action.budget is None:
-            raise BadCommand("can't increase budget")
-        new_action = last_action.more()
-        return new_action.execute(env.history[-1], budget)
-
+#class More(Command):
+#
+#    def __str__(self):
+#        return "more"
+#
+#    def execute(self, env, budget):
+#        new_env = env.add_action(self)
+#        last_action = env.actions[-1]
+#        if not isinstance(last_action, Ask):
+#            raise BadCommand("more can only follow an action")
+#        new_action = last_action.more()
+#        return new_action.execute(env.history[-1], budget)
+#
 class Replay(Command):
 
     def __str__(self):
@@ -213,6 +216,7 @@ def options(*xs):
     return result
 
 number = pp.Word("0123456789").setParseAction(lambda t : int(t[0]))
+power_of_ten = (pp.Literal("1") + pp.Word("0")).setParseAction(lambda t : int(t[0] + t[1]))
 prose = pp.Word(" ,!?+-/*.;:_<>=&%{}[]\'\"" + pp.alphas).leaveWhitespace()
 
 agent_pointer = (raw("@")+ number).leaveWhitespace()
@@ -233,8 +237,8 @@ message << literal_message
 target_modifier = raw("@")+number
 target_modifier.setParseAction(lambda xs : ("recipient", Pointer(xs[0], type=Channel)))
 
-budget_modifier = raw("$")
-budget_modifier.setParseAction(lambda xs : ("budget", None))
+budget_modifier = raw("$")+power_of_ten
+budget_modifier.setParseAction(lambda xs : ("budget", xs[0]))
 
 ask_modifiers = pp.ZeroOrMore(target_modifier | budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
@@ -251,10 +255,10 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 view_command = raw("view") + pp.Empty() + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-more_command = raw("more")
-more_command.setParseAction(lambda xs : More())
-
+#more_command = raw("more")
+#more_command.setParseAction(lambda xs : More())
+#
 replay_command = raw("replay")
 replay_command.setParseAction(lambda xs : Replay())
 
-command = ask_command | reply_command | view_command | fix_command | more_command | replay_command
+command = ask_command | reply_command | view_command | fix_command | replay_command #| more_command
