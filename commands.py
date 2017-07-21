@@ -3,6 +3,7 @@ from utils import unweave
 from messages import Message, Pointer, Channel
 import messages
 import main
+from math import log
 
 class BadCommand(Exception):
     def __init__(self, explanation):
@@ -46,15 +47,18 @@ class Ask(Command):
         self.budget = budget
 
     def __str__(self):
-        return "ask{} {}".format("" if self.recipient is None else self.recipient, self.message)
+        recipient_str = "" if self.recipient is None else str(self.recipient)
+        budget_str = "$" if self.budget is None else ""
+        return "ask{}{} {}".format(recipient_str, budget_str, self.message)
 
     def messages(self):
         return [self.message]
 
     def more(self):
-        return Ask(message=self.message, recipient=self.recipient, budget =4*self.budget)
+        return Ask(message=self.message, recipient=self.recipient, budget=4*self.budget)
 
     def execute(self, env, budget):
+        nominal_budget = 4**round(log(budget) / log(4)) if self.budget is None else self.budget
         try:
             if self.recipient is not None:
                 channel = self.recipient.instantiate(env.args)
@@ -66,7 +70,7 @@ class Ask(Command):
             env = env.add_action(self)
             response, budget_consumed = main.ask_Q(message,
                     sender=env, context=env.context, receiver=receiver, translator=translator,
-                    nominal_budget=self.budget, invisible_budget=budget)
+                    nominal_budget=nominal_budget, invisible_budget=budget)
             return None, env.add_message(response), budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
@@ -120,6 +124,8 @@ class More(Command):
         last_action = env.actions[-1]
         if not isinstance(last_action, Ask):
             raise BadCommand("more can only follow an action")
+        if last_action.budget is None:
+            raise BadCommand("can't increase budget")
         new_action = last_action.more()
         return new_action.execute(env.history[-1], budget)
 
@@ -227,7 +233,10 @@ message << literal_message
 target_modifier = raw("@")+number
 target_modifier.setParseAction(lambda xs : ("recipient", Pointer(xs[0], type=Channel)))
 
-ask_modifiers = pp.ZeroOrMore(target_modifier)
+budget_modifier = raw("$")
+budget_modifier.setParseAction(lambda xs : ("budget", None))
+
+ask_modifiers = pp.ZeroOrMore(target_modifier | budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 
 ask_command = (raw("ask")) + ask_modifiers + pp.Empty() + message
