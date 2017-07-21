@@ -21,7 +21,7 @@ class Command(object):
 
 class Placeholder(Command):
 
-    def __init__(self, s):
+    def __init__(self, s=""):
         self.s = s
         pass
 
@@ -126,7 +126,7 @@ class Say(Command):
 
     def execute(self, env, budget):
         try:
-            env = env.add_action(self).add_message(self.message)
+            env = env.add_action(Placeholder()).add_message(self.message)
             return None, env, 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")

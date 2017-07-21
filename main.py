@@ -128,28 +128,46 @@ ask move the agent n/e/s/w in world #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
+    def get_lines(self, debug=False):
+        #message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
+        #action_lines = [self.display_action(i, a, debug) for i, a in enumerate(self.actions)]
+        #return utils.interleave(action_lines, message_lines)
+        result = []
+        for i, a in enumerate(self.actions):
+            m = self.messages[i]
+            prefix = "{}. ".format(i)
+            if len(str(a)) > 0:
+                result.append(prefix + str(a))
+                result.append(" " * len(prefix) + str(m))
+            else:
+                result.append(prefix + str(m))
+            result.append("")
+        return result
+
     @staticmethod
     def display_message(i, m):
-        return ">>> {}\n".format(m)
+        prefix = "{}. ".format(i)
+        return " " * len("{}. ".format(i))
+        return "{}{}\n".format(prefix, m)
 
     @staticmethod
     def display_action(i, a, debug=False):
-        prefix = "<<< "
+        #prefix = "<<< "
         #if debug:
-        if True:
-            prefix = utils.pad_to("{}.".format(i), len(prefix))
+        #    prefix = utils.pad_to("{}.".format(i), len(prefix))
+        prefix = "{}. ".format(i)
         return "{}{}".format(prefix, a)
 
     def get_response(self, **kwargs):
         return get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
     def delete(self, n):
-        def cut(x, m): return x[:m] + x[m+1:]
+        def cut(x): return x[:n] + x[n+1:]
         result = self.copy(
-                messages=cut(self.messages, n+1),
-                actions=cut(self.actions, n),
-                responses=cut(self.responses, n),
-                history=cut(self.history, n),
+                messages=cut(self.messages),
+                actions=cut(self.actions),
+                responses=cut(self.responses),
+                history=cut(self.history),
             )
         in_use =  {k:False for k in range(len(self.args))}
         def note_used(x):
@@ -299,7 +317,7 @@ is cell #n n/e/s/w of cell #m?"""
 
 def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=float("inf"), invisible_budget=float("inf")):
     translator = Translator(context=context) if translator is None else translator
-    receiver = Implementer(context=context) if receiver is None else receiver
+    receiver = Implementer(context=context).add_action(commands.Placeholder()) if receiver is None else receiver
     budget_consumed = 0
     def address(m, i, t):
         return messages.addressed_message(m, implementer=i, translator=t, budget=nominal_budget)
@@ -415,7 +433,7 @@ def main():
     with Context() as context:
         world = worlds.default_world()
         init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        return Implementer(context=context).run(init_message, use_cache=False)
+        return Implementer(context=context).add_action(commands.Placeholder("")).run(init_message, use_cache=False)
 
 if __name__ == "__main__":
     try:
