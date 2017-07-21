@@ -132,6 +132,22 @@ class View(Command):
 #        new_action = last_action.more()
 #        return new_action.execute(env.history[-1], budget)
 #
+class Say(Command):
+
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return "say {}".format(self.message)
+
+    def messages(self):
+        return [self.message]
+
+    def execute(self, env, budget):
+        env = env.add_action(self)
+        env = env.add_message(self.message)
+        return None, env, 0
+
 class Replay(Command):
 
     def __str__(self):
@@ -252,6 +268,9 @@ fix_command.setParseAction(lambda xs : Fix())
 reply_command = (raw("reply")) + pp.Empty() + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
+say_command = (raw("say")) + pp.Empty() + message
+say_command.setParseAction(lambda xs : Say(xs[0]))
+
 view_command = raw("view") + pp.Empty() + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
@@ -261,4 +280,4 @@ view_command.setParseAction(lambda xs : View(xs[0]))
 replay_command = raw("replay")
 replay_command.setParseAction(lambda xs : Replay())
 
-command = ask_command | reply_command | view_command | fix_command | replay_command #| more_command
+command = ask_command | reply_command | say_command | view_command | fix_command | replay_command #| more_command
