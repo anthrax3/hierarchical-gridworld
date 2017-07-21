@@ -191,6 +191,8 @@ class Terminal(object):
         type, ch, key, mod, w, h, x, y = self.t.poll_event()
         if type == termbox.EVENT_KEY and key == termbox.KEY_CTRL_C:
             raise KeyboardInterrupt()
+        if type == termbox.EVENT_KEY and key == termbox.KEY_CTRL_Q:
+            raise ValueError()
         if key == 32:
             ch = " "
         return ch, key

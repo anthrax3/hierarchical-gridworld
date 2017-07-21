@@ -7,20 +7,22 @@ import term
 import suggestions
 
 class Env(object):
-    def __init__(self, context=None, messages=(), actions=(), args=(), history=()):
+    def __init__(self, context=None, messages=(), actions=(), args=(), history=(), responses=()):
         self.messages = messages
         self.actions = actions
         self.context = context
         self.args = args
         self.history = history
+        self.responses = responses
 
-    def copy(self, messages=None, actions=None, context=None, args=None, history=None, **kwargs):
+    def copy(self, messages=None, actions=None, context=None, args=None, history=None, responses=None, **kwargs):
         if messages is None: messages = self.messages
         if actions is None: actions = self.actions
         if context is None: context = self.context
         if args is None: args = self.args
         if history is None: history = self.history
-        return self.__class__(messages=messages, actions=actions, context=context, args=args, history=history, **kwargs)
+        if responses is None: responses = self.responses
+        return self.__class__(messages=messages, actions=actions, context=context, args=args, history=history, responses=responses, **kwargs)
 
     def instantiate_message(self, m):
         new_env_args = self.args
@@ -37,8 +39,10 @@ class Env(object):
         new_m, new_env = self.instantiate_message(m)
         return new_env.copy(messages = self.messages + (new_m,))
 
-    def add_action(self, a):
-        return self.copy(actions=self.actions + (a,), history=self.history + (self,))
+    def add_action(self, a, s=None):
+        if s is None:
+            s = str(a)
+        return self.copy(actions=self.actions + (a,), history=self.history + (self,), responses=self.responses + (s,))
 
     def get_lines(self, debug=False):
         message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
@@ -60,7 +64,7 @@ class Env(object):
                 try:
                     n = int(n)
                     if n >= 0 and n < len(self.actions):
-                        old = "{}".format(self.actions[n])
+                        old = self.responses[n]
                         message = "previously responded '{}'".format(old)
                         self.history[n].get_response(error_message=message, default=old)
                         return n
@@ -70,6 +74,28 @@ class Env(object):
                     t.print_line("please type 'none' or an integer")
 
 class Implementer(Env):
+
+    help_message = """Valid commands:
+
+"ask Q", e.g. "ask what is one plus one?"
+"reply A", e.g. "reply it is two"
+"view n", e.g. "view 0", expand the pointer #n
+"more", rerun the previous query with a larger budget
+"fix", change one of the previous actios in this context
+"replay", rerun the previous query to reflect fixes
+
+Valid messages: text interspersed with pointers such as "#1",
+sub-messages enclosed in parentheses such as "(one more than #2)",
+or channels such as "@0"
+
+Built in commands:
+
+ask what cell contains the agent in world #n?
+ask what is in cell #n in world #m?
+ask move the agent n/e/s/w in world #n?
+ask what cell is directly n/e/s/w of cell #m?
+ask is cell #n n/e/s/w of cell #m?"""
+
     @staticmethod
     def display_message(i, m):
         return ">>> {}\n".format(m)
@@ -83,140 +109,196 @@ class Implementer(Env):
     def get_response(self, **kwargs):
         return get_response(self, kind="implement", prompt="<<< ", **kwargs)
 
-    def run(self, m, use_cache=True):
+
+    def run(self, m, use_cache=True, budget=float('inf')):
         implementer = self.add_message(m)
         message = None
+        budget_consumed = 1 #the cost of merely asking a question
         while True:
+            if budget_consumed >= budget:
+                return Message("<<budget exhausted>>"), implementer.add_action(commands.Placeholder("<<budget exhausted>>")), budget_consumed
             s = implementer.get_response(error_message=message, use_cache=use_cache)
             command = commands.parse_command(s)
-            if command is None:
+            if s == "help":
+                message = self.help_message
+            elif command is None:
                 message = "syntax error: {}".format(s)
             else:
                 message = None
                 try:
-                    retval, implementer = command.execute(implementer)
+                    retval, implementer, step_budget_consumed = command.execute(implementer, budget - budget_consumed)
+                    budget_consumed += step_budget_consumed
                     if retval is not None:
-                        return retval, implementer
-                except commands.BadCommand:
-                    message = "syntax error: {}".format(s)
+                        return retval, implementer, budget_consumed
+                except commands.BadCommand as e:
+                    message = "{}: {}".format(e, s)
                 except RecursionError:
-                    raise
                     implementer = implementer.add_action(command).add_message(Message("stack overflow"))
 
 class Translator(Env):
+
+    help_message = """Enter a message to pass it through
+
+Valid commands:
+
+"reply A", e.g. "reply I don't know", returns A to the sender
+"view n", e.g. "view 0", expand the pointer #n
+"fix", change one of the previous actions in this context
+
+Valid messages: text interspersed with pointers such as "#1",
+sub-messages enclosed in parentheses such as "(one more than #2)",
+or channels such as "@0"
+
+Some messages will be handled automatically:
+
+what cell contains the agent in world #n?
+what is in cell #n in world #m?
+move the agent n/e/s/w in world #n?
+what cell is directly n/e/s/w of cell #m?
+is cell #n n/e/s/w of cell #m?"""
+
     def display_message(self, i, m):
-        #sender = "A" if i % 2 == 0 else "B"
         sender = self.sources[i]
         return "{} >>> {}".format(sender, m)
 
     def display_action(self, i, a, debug=False):
-        #receiver = "B" if i % 2 == 0 else "A"
         receiver = self.targets[i]
         prefix = "{} <<< ".format(receiver)
         if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
         return "{}{}\n".format(prefix, a)
 
     def get_response(self, **kwargs):
-        #receiver = "B" if len(self.actions) % 2 == 0 else "A"
-        receiver = self.targets[-1]
-        prompt = "{} <<< ".format(receiver)
+        prompt = "  <<< "
         return get_response(self, prompt=prompt, kind="translate", **kwargs)
 
-    def add_source_target(self, source, target):
-        return self.copy(sources = self.sources + (source,), targets = self.targets + (target,))
-
-    def __init__(self, sources=(), targets=(), **kwargs):
+    def __init__(self, sender="A", receiver="B", sources=(), targets=(), **kwargs):
         self.sources = sources
         self.targets = targets
+        self.sender = sender
+        self.receiver = receiver
         return super().__init__(**kwargs)
 
-    def copy(self, sources=None, targets=None, **kwargs):
+    def copy(self, sources=None, targets=None, sender=None, receiver=None, **kwargs):
         if sources is None: sources=self.sources
         if targets is None: targets=self.targets
-        return super().copy(sources=sources, targets=targets, **kwargs)
+        if sender is None: sender=self.sender
+        if receiver is None: receiver=self.receiver
+        return super().copy(sources=sources, targets=targets, sender=sender, receiver=receiver, **kwargs)
 
-    def run(self, m, use_cache=True, source="*", target="*"):
-        translator = self.add_source_target(source, target).add_message(m)
+    def add_source(self, source=None):
+        if source is None: source = self.sender
+        return self.copy(sources=self.sources + (source,))
+
+    def add_target(self, target=None):
+        if target is None: target = self.receiver
+        return self.copy(targets=self.targets + (target,))
+
+    def swap(self):
+        return self.copy(receiver=self.sender, sender=self.receiver)
+
+    def run(self, m, use_cache=True):
+        translator = self.add_message(m).add_source()
         message = None
         while True:
             s = translator.get_response(error_message=message, use_cache=use_cache)
             viewer = commands.parse_view(s)
             translation = commands.parse_message(s)
             fixer = commands.parse_fix(s)
-            if fixer is not None:
+            replier = commands.parse_reply(s)
+            if s == "help":
+                message = self.help_message
+            elif fixer is not None:
                 message = fixer.fix(translator)
+            elif replier is not None:
+                result = replier.message.instantiate(translator.args)
+                translator = translator.add_target(self.sender)
+                return None, result, translator.add_action(translation)
             elif viewer is not None:
                 try:
                     translator = viewer.view(translator)
                     message = None
-                except commands.BadCommand:
-                    message = "syntax error: {}".format(s)
+                except commands.BadCommand as e:
+                    message = "{}: {}".format(e, s)
             elif translation is not None:
                 try:
                     result = translation.instantiate(translator.args)
-                    return result, translator.add_action(translation)
+                    translator = translator.add_target()
+                    return result, None, translator.add_action(translation)
                 except RecursionError:
-                    raise
                     message = "stack overflow on {}".format(s)
                 except BadInstantiation:
                     message = "syntax error: {}".format(s)
             else:
                 message = "syntax error: {}".format(s)
 
-def ask_Q(Q, context, sender, receiver=None, translator=None):
+def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=float("inf"), invisible_budget=float("inf")):
     translator = Translator(context=context) if translator is None else translator
     receiver = Implementer(context=context) if receiver is None else receiver
-    builtin_result = builtin_handler(Q)
-    if builtin_result is not None:
-        translator = translator.add_message(Q).add_action(Q)
-        translator = translator.add_message(builtin_result).add_action(builtin_result)
-        implementer = receiver.add_message(Q).add_action(commands.Automatic())
-        return messages.addressed_message(builtin_result, translator=translator, implementer=implementer)
-    translated_Q, translator = translator.run(Q, source="A", target="B")
-    if sender is not None:
-        addressed_Q = messages.addressed_message(translated_Q, implementer=sender, translator=translator, question=True)
-    A, receiver = receiver.run(addressed_Q)
-    translated_A, translator = translator.run(A, source="B", target="A")
-    addressed_A = messages.addressed_message(translated_A, implementer=receiver, translator=translator)
-    return addressed_A
+    budget_consumed = 0
+    def address(m, i, t):
+        return messages.addressed_message(m, implementer=i, translator=t, budget=nominal_budget)
+    Q, A, translator = translator.run(Q)
+    translator = translator.swap()
+    while True:
+        if A is not None:
+            A = messages.addressed_message(A, implementer=receiver, translator=translator.swap(), budget=nominal_budget, question=False)
+            return A, budget_consumed
+        if Q is not None:
+            builtin_result = builtin_handler(Q)
+            Q = messages.addressed_message(Q, implementer=sender, translator=translator, budget=nominal_budget, question=True)
+            if builtin_result is not None:
+                receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
+                A = builtin_result
+            else:
+                A, receiver, step_budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget-budget_consumed))
+                budget_consumed += step_budget_consumed
+            if passes_through_translation(A):
+                Q = None
+                translator = translator.add_message(A).add_action(A).add_source().add_target()
+            else:
+                A, Q, translator = translator.run(A)
+
+def passes_through_translation(A):
+    if A.matches("<<budget exhausted>>"):
+        return True
+    return False
 
 def builtin_handler(Q):
-    if (Q.matches("what cell contains the agent in world []?")
-            and isinstance(Q.args[0], messages.WorldMessage)):
-        grid, agent, history = Q.args[0].world
-        return Message("the agent is in cell []", messages.CellMessage(agent))
-    if (Q.matches("what is in cell [] in world []?")
-            and isinstance(Q.args[0], messages.CellMessage)
-            and isinstance(Q.args[1], messages.WorldMessage)):
-        cell = Q.args[0].cell
-        world = Q.args[1].world
-        return Message("it contains []", Message(worlds.look(world, cell)))
+    if Q.matches("what cell contains the agent in world []?"):
+        world = messages.get_world(Q.args[0])
+        if world is not None:
+            grid, agent, history = world
+            return Message("the agent is in cell []", messages.CellMessage(agent))
+    if Q.matches("what is in cell [] in world []?"):
+        cell = messages.get_cell(Q.args[0])
+        world = messages.get_world(Q.args[1])
+        if cell is not None and world is not None:
+            return Message("it contains []", Message(worlds.look(world, cell)))
     for direction in worlds.directions:
-        if (Q.matches("is cell [] {} of cell []?".format(direction))
-                and isinstance(Q.args[0], messages.CellMessage)
-                and isinstance(Q.args[1], messages.CellMessage)):
-            a = Q.args[0].cell
-            b = Q.args[1].cell
-            if (a - b).in_direction(direction):
-                return Message("yes")
-            else:
-                return Message("no")
-        if (Q.matches("move the agent {} in world []".format(direction))
-                and isinstance(Q.args[0], messages.WorldMessage)):
-            world = Q.args[0].world
-            new_world, moved = worlds.move_person(world, direction)
-            if moved:
-                return Message("the resulting world is []", messages.WorldMessage(new_world))
-            else:
-                return Message("it can't move that direction")
-        if (Q.matches("what cell is directly {} of cell []?".format(direction))
-                and isinstance(Q.args[0], messages.CellMessage)):
-            cell = Q.args[0].cell
-            new_cell, moved = cell.move(direction)
-            if moved:
-                return Message("the cell []", messages.CellMessage(new_cell))
-            else:
-                return Message("there is no cell there")
+        if Q.matches("is cell [] {} of cell []?".format(direction)):
+            a = messages.get_cell(Q.args[0])
+            b = messages.get_cell(Q.args[1])
+            if a is not None and b is not None:
+                if (a - b).in_direction(direction):
+                    return Message("yes")
+                else:
+                    return Message("no")
+        if Q.matches("move the agent {} in world []".format(direction)):
+            world = messages.get_world(Q.args[0])
+            if world is not None:
+                new_world, moved = worlds.move_person(world, direction)
+                if moved:
+                    return Message("the resulting world is []", messages.WorldMessage(new_world))
+                else:
+                    return Message("it can't move that direction")
+        if Q.matches("what cell is directly {} of cell []?".format(direction)):
+            cell = messages.get_cell(Q.args[0])
+            if cell is not None:
+                new_cell, moved = cell.move(direction)
+                if moved:
+                    return Message("the cell []", messages.CellMessage(new_cell))
+                else:
+                    return Message("there is no cell there")
     return None
 
 class Context(object):

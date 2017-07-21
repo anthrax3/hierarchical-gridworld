@@ -97,6 +97,13 @@ class WorldMessage(Message):
     def __str__(self):
         return "<<gridworld grid>>"
 
+def get_world(m):
+    if isinstance(m, WorldMessage):
+        return m.world
+    if m.matches("the gridworld grid []"):
+        return get_world(m.args[0])
+    return None
+
 class CellMessage(Message):
 
     def __init__(self, cell):
@@ -106,6 +113,13 @@ class CellMessage(Message):
 
     def __str__(self):
         return "<<gridworld cell>>"
+
+def get_cell(m):
+    if isinstance(m, CellMessage):
+        return m.cell
+    if m.matches("the gridworld cell []"):
+        return get_cell(m.args[0])
+    return None
 
 class Channel(Referent):
     """
@@ -124,8 +138,10 @@ class Channel(Referent):
     def instantiate(self, xs):
         raise Exception("should not try to instantiate a channel")
 
-def addressed_message(message, implementer, translator, question=False):
-    return Message("{} from []: ".format("Q" if question else "A"), Channel(implementer=implementer, translator=translator)) + message
+def addressed_message(message, implementer, translator, question=False, budget=float('inf')):
+    budget_str = "" if budget == float('inf') else ", budget {}".format(budget)
+    channel = Channel(implementer=implementer, translator=translator)
+    return Message("{} from []{}: ".format("Q" if question else "A", budget_str), channel) + message
 
 def strip_prefix(message, sep=": "):
     for i, t in enumerate(message.text):
@@ -176,19 +192,3 @@ class Pointer(Referent):
 
     def __str__(self):
         return "{}{}".format(self.type.symbol, self.n)
-
-#class World(Referent):
-#    """
-#    A World refers to a state of gridworld
-#    """
-#
-#    symbol = "$"
-#
-#    def __init__(self, world):
-#        self.world = world
-#
-#    def instantiate(self, xs):
-#        raise Exception("should not instantiate a World")
-#
-#    def well_formed(self):
-#        return True
