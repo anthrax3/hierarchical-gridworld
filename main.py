@@ -264,42 +264,41 @@ def passes_through_translation(A):
     return False
 
 def builtin_handler(Q):
-    if (Q.matches("what cell contains the agent in world []?")
-            and isinstance(Q.args[0], messages.WorldMessage)):
-        grid, agent, history = Q.args[0].world
-        return Message("the agent is in cell []", messages.CellMessage(agent))
-    if (Q.matches("what is in cell [] in world []?")
-            and isinstance(Q.args[0], messages.CellMessage)
-            and isinstance(Q.args[1], messages.WorldMessage)):
-        cell = Q.args[0].cell
-        world = Q.args[1].world
-        return Message("it contains []", Message(worlds.look(world, cell)))
+    if Q.matches("what cell contains the agent in world []?"):
+        world = messages.get_world(Q.args[0])
+        if world is not None:
+            grid, agent, history = world
+            return Message("the agent is in cell []", messages.CellMessage(agent))
+    if Q.matches("what is in cell [] in world []?"):
+        cell = messages.get_cell(Q.args[0])
+        world = messages.get_world(Q.args[1])
+        if cell is not None and world is not None:
+            return Message("it contains []", Message(worlds.look(world, cell)))
     for direction in worlds.directions:
-        if (Q.matches("is cell [] {} of cell []?".format(direction))
-                and isinstance(Q.args[0], messages.CellMessage)
-                and isinstance(Q.args[1], messages.CellMessage)):
-            a = Q.args[0].cell
-            b = Q.args[1].cell
-            if (a - b).in_direction(direction):
-                return Message("yes")
-            else:
-                return Message("no")
-        if (Q.matches("move the agent {} in world []".format(direction))
-                and isinstance(Q.args[0], messages.WorldMessage)):
-            world = Q.args[0].world
-            new_world, moved = worlds.move_person(world, direction)
-            if moved:
-                return Message("the resulting world is []", messages.WorldMessage(new_world))
-            else:
-                return Message("it can't move that direction")
-        if (Q.matches("what cell is directly {} of cell []?".format(direction))
-                and isinstance(Q.args[0], messages.CellMessage)):
-            cell = Q.args[0].cell
-            new_cell, moved = cell.move(direction)
-            if moved:
-                return Message("the cell []", messages.CellMessage(new_cell))
-            else:
-                return Message("there is no cell there")
+        if Q.matches("is cell [] {} of cell []?".format(direction)):
+            a = messages.get_cell(Q.args[0])
+            b = messages.get_cell(Q.args[1])
+            if a is not None and b is not None:
+                if (a - b).in_direction(direction):
+                    return Message("yes")
+                else:
+                    return Message("no")
+        if Q.matches("move the agent {} in world []".format(direction)):
+            world = messages.get_world(Q.args[0])
+            if world is not None:
+                new_world, moved = worlds.move_person(world, direction)
+                if moved:
+                    return Message("the resulting world is []", messages.WorldMessage(new_world))
+                else:
+                    return Message("it can't move that direction")
+        if Q.matches("what cell is directly {} of cell []?".format(direction)):
+            cell = messages.get_cell(Q.args[0])
+            if cell is not None:
+                new_cell, moved = cell.move(direction)
+                if moved:
+                    return Message("the cell []", messages.CellMessage(new_cell))
+                else:
+                    return Message("there is no cell there")
     return None
 
 class Context(object):
