@@ -153,7 +153,7 @@ ask is cell #n n/e/s/w of cell #m?"""
     def frame_message(self):
         result = Message("called by []", self.caller)
         if self.budget != float('inf'):
-            result += Message(" with budget {}".format(budget))
+            result += Message(" with budget {}".format(self.budget))
         return result
 
     @staticmethod
