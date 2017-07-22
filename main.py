@@ -105,6 +105,7 @@ class Env(object):
 
 class Implementer(Env):
 
+    max_registers = 5
     help_message = """Valid commands:
 
 "ask Q", e.g. "ask what is one plus one?"

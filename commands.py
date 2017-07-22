@@ -61,7 +61,7 @@ class Ask(Command):
         return [] if self.recipient is None else [self.recipient]
 
     def execute(self, env, budget):
-        if len(env.actions) >= 4:
+        if len(env.actions) >= env.max_registers:
             raise BadCommand("no free registers (use clear or combine instead)")
         if self.budget is None:
             return Ask(self.message, self.recipient, round_budget(budget)).execute(env, budget)
@@ -213,7 +213,7 @@ class Reply(Command):
         return [] if self.recipient is None else [self.recipient]
 
     def execute(self, env, budget):
-        if len(env.actions) >= 4:
+        if len(env.actions) >= env.max_registers:
             raise BadCommand("no free registers (use clear or combine to free one)")
         try:
             return self.message.instantiate(env.args), env.add_action(Reply(self.message, env.caller)), 0
