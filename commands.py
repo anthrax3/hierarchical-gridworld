@@ -19,6 +19,9 @@ class Command(object):
     def messages(self):
         return []
 
+    def pointers(self):
+        return []
+
 class Placeholder(Command):
 
     def __init__(self, s=""):
@@ -48,16 +51,20 @@ class Ask(Command):
 
     def __str__(self):
         recipient_str = "" if self.recipient is None else str(self.recipient)
-        budget_str = "" if self.budget is None else "${}".format(self.budget)
-        return "ask{} {}".format(recipient_str, self.message)
+        budget_str = "" if self.budget is None or self.budget == float('inf') else "${}".format(self.budget)
+        return "ask{}{} {}".format(recipient_str, budget_str, self.message)
 
     def messages(self):
         return [self.message]
 
+    def pointers(self):
+        return [] if self.recipient is None else [self.recipient]
+
     def execute(self, env, budget):
         if len(env.actions) >= 4:
             raise BadCommand("no free registers (use clear or combine instead)")
-        nominal_budget = round_budget(budget) if self.budget is None else self.budget
+        if self.budget is None:
+            return Ask(self.message, self.recipient, round_budget(budget)).execute(env, budget)
         try:
             if self.recipient is not None:
                 channel = self.recipient.instantiate(env.args)
@@ -69,7 +76,7 @@ class Ask(Command):
             env = env.add_action(self)
             response, budget_consumed = main.ask_Q(message,
                     sender=env, context=env.context, receiver=receiver, translator=translator,
-                    nominal_budget=nominal_budget, invisible_budget=budget)
+                    nominal_budget=self.budget, invisible_budget=budget)
             return None, env.add_message(response), budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
@@ -192,20 +199,24 @@ class Replay(Command):
 
 class Reply(Command):
 
-    def __init__(self, message):
+    def __init__(self, message, recipient=None):
         self.message = message
+        self.recipient = recipient
 
     def __str__(self):
-        return "reply {}".format(self.message)
+        return "reply{} {}".format("" if self.recipient is None else self.recipient, self.message)
 
     def messages(self):
         return [self.message]
 
+    def pointers(self):
+        return [] if self.recipient is None else [self.recipient]
+
     def execute(self, env, budget):
         if len(env.actions) >= 4:
-            raise BadCommand("no free registers (use clear or combine instead)")
+            raise BadCommand("no free registers (use clear or combine to free one)")
         try:
-            return self.message.instantiate(env.args), env.add_action(self), 0
+            return self.message.instantiate(env.args), env.add_action(Reply(self.message, env.caller)), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 

@@ -1,5 +1,5 @@
 import utils
-from messages import Message, Pointer, Channel, Referent, addressed_message, BadInstantiation
+from messages import Message, Pointer, Channel, Referent, BadInstantiation
 import messages
 import commands
 import worlds
@@ -7,22 +7,20 @@ import term
 import suggestions
 
 class Env(object):
-    def __init__(self, context=None, messages=(), actions=(), args=(), history=(), responses=()):
+    def __init__(self, context=None, messages=(), actions=(), args=(), history=(), responses=(), caller=None, budget=float('inf')):
         self.messages = messages
         self.actions = actions
         self.context = context
         self.args = args
         self.history = history
         self.responses = responses
+        self.caller = caller
+        self.budget = budget
 
-    def copy(self, messages=None, actions=None, context=None, args=None, history=None, responses=None, **kwargs):
-        if messages is None: messages = self.messages
-        if actions is None: actions = self.actions
-        if context is None: context = self.context
-        if args is None: args = self.args
-        if history is None: history = self.history
-        if responses is None: responses = self.responses
-        return self.__class__(messages=messages, actions=actions, context=context, args=args, history=history, responses=responses, **kwargs)
+    def copy(self, **kwargs):
+        for s in ["context", "messages", "actions", 'args', 'history', 'responses', 'caller', 'budget']:
+            if s not in kwargs: kwargs[s] = self.__dict__[s]
+        return self.__class__(**kwargs)
 
     def instantiate_message(self, m):
         new_env_args = self.args
@@ -54,17 +52,17 @@ class Env(object):
             elif isinstance(m, commands.Ask):
                 return commands.Ask(message=sub(m.message), recipient=sub(m.recipient), budget=m.budget)
             elif isinstance(m, commands.Reply):
-                return commands.Reply(message=sub(m.message))
+                return commands.Reply(message=sub(m.message), recipient=sub(m.recipient))
             elif isinstance(m, commands.Say):
                 return commands.Say(message=sub(m.message))
             else:
                 return m
         return self.copy(
+            caller=sub(self.caller),
             messages=tuple(sub(m) for m in self.messages),
             actions=tuple(sub(a) for a in self.actions),
             args=self.args[:n] + self.args[n+1:]
         )
-
 
     def add_action(self, a, s=None):
         if s is None:
@@ -128,11 +126,19 @@ ask move the agent n/e/s/w in world #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
+    def set_caller(self, caller):
+        caller_pointer = Pointer(n=len(self.args), type=Channel)
+        env = self.copy(args = self.args + (caller,))
+        return env.copy(caller=caller_pointer).clear_unused_pointers()
+
     def get_lines(self, debug=False):
         #message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
         #action_lines = [self.display_action(i, a, debug) for i, a in enumerate(self.actions)]
         #return utils.interleave(action_lines, message_lines)
         result = []
+        if self.caller is not None:
+            result.append(str(self.frame_message()))
+            result.append("")
         for i, a in enumerate(self.actions):
             m = self.messages[i]
             prefix = "{}. ".format(i)
@@ -142,6 +148,12 @@ ask is cell #n n/e/s/w of cell #m?"""
             else:
                 result.append(prefix + str(m))
             result.append("")
+        return result
+
+    def frame_message(self):
+        result = Message("called by []", self.caller)
+        if self.budget != float('inf'):
+            result += Message(" with budget {}".format(budget))
         return result
 
     @staticmethod
@@ -169,15 +181,21 @@ ask is cell #n n/e/s/w of cell #m?"""
                 responses=cut(self.responses),
                 history=cut(self.history),
             )
+        return result.clear_unused_pointers()
+
+    def clear_unused_pointers(self):
         in_use =  {k:False for k in range(len(self.args))}
         def note_used(x):
             if isinstance(x, Pointer): in_use[x.n] = True
             return x
-        for m in result.messages:
+        for m in self.messages + (self.frame_message(),):
             m.transform_args_recursive(note_used)
-        for a in result.actions:
+        for a in self.actions:
             for m in a.messages():
                 m.transform_args_recursive(note_used)
+            for p in a.pointers():
+                in_use[p.n] = True
+        result = self
         for k in reversed(list(range(len(self.args)))):
             if not in_use[k]:
                 result = result.delete_arg(k)
@@ -262,12 +280,10 @@ is cell #n n/e/s/w of cell #m?"""
         self.receiver = receiver
         return super().__init__(**kwargs)
 
-    def copy(self, sources=None, targets=None, sender=None, receiver=None, **kwargs):
-        if sources is None: sources=self.sources
-        if targets is None: targets=self.targets
-        if sender is None: sender=self.sender
-        if receiver is None: receiver=self.receiver
-        return super().copy(sources=sources, targets=targets, sender=sender, receiver=receiver, **kwargs)
+    def copy(self, **kwargs):
+        for s in ["sources", 'targets', 'sender', 'receiver']:
+            if s not in kwargs: kwargs[s] = self.__dict__[s]
+        return super().copy(**kwargs)
 
     def add_source(self, source=None):
         if source is None: source = self.sender
@@ -319,17 +335,16 @@ def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=flo
     translator = Translator(context=context) if translator is None else translator
     receiver = Implementer(context=context).add_action(commands.Placeholder()) if receiver is None else receiver
     budget_consumed = 0
-    def address(m, i, t):
-        return messages.addressed_message(m, implementer=i, translator=t, budget=nominal_budget)
     Q, A, translator = translator.run(Q)
     translator = translator.swap()
     while True:
         if A is not None:
-            A = messages.addressed_message(A, implementer=receiver, translator=translator.swap(), budget=nominal_budget, question=False)
+            A = messages.address_answer(A, Channel(receiver, translator))
             return A, budget_consumed
         if Q is not None:
             builtin_result = builtin_handler(Q)
-            Q = messages.addressed_message(Q, implementer=sender, translator=translator, budget=nominal_budget, question=True)
+            Q = messages.address_question(Q)
+            receiver = receiver.set_caller(Channel(sender, translator)).copy(budget=nominal_budget)
             if builtin_result is not None:
                 receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
                 A = builtin_result

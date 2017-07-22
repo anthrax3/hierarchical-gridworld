@@ -143,6 +143,12 @@ def addressed_message(message, implementer, translator, question=False, budget=f
     channel = Channel(implementer=implementer, translator=translator)
     return Message("{} from []{}: ".format("Q" if question else "A", budget_str), channel) + message
 
+def address_answer(A, sender):
+    return Message("[]: ", sender) + A
+
+def address_question(Q):
+    return Message("Q: ") + Q
+
 def strip_prefix(message, sep=": "):
     for i, t in enumerate(message.text):
         if sep in t:
