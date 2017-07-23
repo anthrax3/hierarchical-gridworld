@@ -10,27 +10,29 @@ from copy import copy
 
 class RegisterMachine(object):
     max_registers = 5
-
+    kind = "implement"
     help_message = """Valid commands:
 
-"ask Q", e.g. "ask what is one plus one?"
-"reply A", e.g. "reply it is two"
+"Q <question>", e.g. "Q what is one plus one?"
+    optionally Q10, Q100, Q1000... to specify budget
+"A <answer>", e.g. "A it is two"
+"say <message>, e.g. "say #1 is south of #2"
 "view n", e.g. "view 0", expand the pointer #n
-"more", rerun the previous query with a larger budget
-"fix", change one of the previous actios in this context
-"replay", rerun the previous query to reflect fixes
+"clear n", e.g. "clear 3", remove the contents of register 3
+"replace n [and m and...] with <message>"
+    == clear n && [clear m && ...] say <message>
 
-Valid messages: text interspersed with pointers such as "#1",
-sub-messages enclosed in parentheses such as "(one more than #2)",
-or channels such as "@0"
+Valid messages: text interspersed with pointers,
+such as "#1", or with sub-messages enclosed in parentheses,
+such as "(one more than #2)".
 
 Built in commands:
 
-ask what cell contains the agent in world #n?
-ask what is in cell #n in world #m?
-ask move the agent n/e/s/w in world #n?
-ask what cell is directly n/e/s/w of cell #m?
-ask is cell #n n/e/s/w of cell #m?"""
+Q what cell contains the agent in grid #n?
+Q what is in cell #n in grid #m?
+Q move the agent n/e/s/w in grid #n?
+Q what cell is directly n/e/s/w of cell #m?
+Q is cell #n n/e/s/w of cell #m?"""
 
     def __init__(self, registers=(), args=(), context=None):
         self.registers = registers
@@ -49,7 +51,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         while True:
             if budget_consumed >= budget:
                 return Message("<<budget exhausted>>"), state, budget_consumed
-            s = get_response(state, error_message=message, use_cache=use_cache, prompt=">> ")
+            s = get_response(state, error_message=message, use_cache=use_cache, prompt=">> ", kind=self.kind)
             command = commands.parse_command(s)
             if s == "help":
                 message = self.help_message
@@ -145,25 +147,28 @@ ask is cell #n n/e/s/w of cell #m?"""
                 result = result.delete_arg(k)
         return result
 
+    def clear_response(self):
+        self.context
+
+
 class Answerer(RegisterMachine):
 
+    kind = "translate"
     help_message = """Enter a message to pass it through
 
 Valid commands:
 
-"reply A", e.g. "reply I don't know", returns A to the sender
 "view n", e.g. "view 0", expand the pointer #n
-"fix", change one of the previous actions in this context
 
-Valid messages: text interspersed with pointers such as "#1",
-sub-messages enclosed in parentheses such as "(one more than #2)",
-or channels such as "@0"
+Valid messages: text interspersed with pointers,
+such as "#1", or with sub-messages enclosed in parentheses,
+such as "(one more than #2)".
 
 Some messages will be handled automatically:
 
-what cell contains the agent in world #n?
-what is in cell #n in world #m?
-move the agent n/e/s/w in world #n?
+what cell contains the agent in grid #n?
+what is in cell #n in grid #m?
+move the agent n/e/s/w in grid #n?
 what cell is directly n/e/s/w of cell #m?
 is cell #n n/e/s/w of cell #m?"""
 
@@ -172,7 +177,7 @@ is cell #n n/e/s/w of cell #m?"""
         message = None
         while True:
             s = get_response(answerer,
-                    kind="translate", default=default, error_message=message,
+                    kind=self.kind, default=default, error_message=message,
                     prompt="   -> ")
             m = commands.parse_message(s)
             viewer = commands.parse_view(s)
@@ -210,12 +215,12 @@ is cell #n n/e/s/w of cell #m?"""
         return A, answerer, budget_consumed
 
 def builtin_handler(Q):
-    if Q.matches("what cell contains the agent in world []?"):
+    if Q.matches("what cell contains the agent in grid []?"):
         world = messages.get_world(Q.args[0])
         if world is not None:
             grid, agent, history = world
             return Message("the agent is in cell []", messages.CellMessage(agent))
-    if Q.matches("what is in cell [] in world []?"):
+    if Q.matches("what is in cell [] in grid []?"):
         cell = messages.get_cell(Q.args[0])
         world = messages.get_world(Q.args[1])
         if cell is not None and world is not None:
@@ -229,12 +234,12 @@ def builtin_handler(Q):
                     return Message("yes")
                 else:
                     return Message("no")
-        if Q.matches("move the agent {} in world []".format(direction)):
+        if Q.matches("move the agent {} in grid []".format(direction)):
             world = messages.get_world(Q.args[0])
             if world is not None:
                 new_world, moved = worlds.move_person(world, direction)
                 if moved:
-                    return Message("the resulting world is []", messages.WorldMessage(new_world))
+                    return Message("the resulting grid is []", messages.WorldMessage(new_world))
                 else:
                     return Message("it can't move that direction")
         if Q.matches("what cell is directly {} of cell []?".format(direction)):
@@ -262,7 +267,7 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
-def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt=">>> ", default=None):
+def get_response(env, kind, use_cache=True, replace_old=False, error_message=None, prompt=">>> ", default=None):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -293,7 +298,7 @@ def get_response(env, kind="implement", use_cache=True, replace_old=False, error
 def main():
     with Context() as context:
         world = worlds.default_world()
-        init_message = messages.Message("[] is a world", messages.WorldMessage(world))
+        init_message = messages.Message("[] is a grid", messages.WorldMessage(world))
         return RegisterMachine(context=context).add_register((init_message,)).run(use_cache=False)
 
 if __name__ == "__main__":
