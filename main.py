@@ -1,111 +1,16 @@
 import utils
+from collections import namedtuple
 from messages import Message, Pointer, Channel, Referent, BadInstantiation
 import messages
 import commands
 import worlds
 import term
 import suggestions
+from copy import copy
 
-class Env(object):
-    def __init__(self, context=None, messages=(), actions=(), args=(), history=(), responses=(), caller=None, budget=float('inf')):
-        self.messages = messages
-        self.actions = actions
-        self.context = context
-        self.args = args
-        self.history = history
-        self.responses = responses
-        self.caller = caller
-        self.budget = budget
-
-    def copy(self, **kwargs):
-        for s in ["context", "messages", "actions", 'args', 'history', 'responses', 'caller', 'budget']:
-            if s not in kwargs: kwargs[s] = self.__dict__[s]
-        return self.__class__(**kwargs)
-
-    def instantiate_message(self, m):
-        new_env_args = self.args
-        def sub(arg):
-            nonlocal new_env_args
-            if isinstance(arg, Pointer):
-                return arg
-            else:
-                new_env_args = new_env_args + (arg,)
-                return Pointer(len(new_env_args) - 1, type=type(arg))
-        return m.transform_args(sub), self.copy(args=new_env_args)
-
-    def add_message(self, m):
-        new_m, new_env = self.instantiate_message(m)
-        return new_env.copy(messages = self.messages + (new_m,))
-
-    def delete_arg(self, n, new_m=None):
-        def sub(m):
-            if isinstance(m, Pointer):
-                if m.n < n:
-                    return m
-                elif m.n == n:
-                    assert new_m is not None
-                    return sub(new_m)
-                elif m.n > n:
-                    return Pointer(m.n - 1, m.type)
-            elif isinstance(m, Message):
-                return m.transform_args_recursive(sub)
-            elif isinstance(m, commands.Ask):
-                return commands.Ask(message=sub(m.message), recipient=sub(m.recipient), budget=m.budget)
-            elif isinstance(m, commands.Reply):
-                return commands.Reply(message=sub(m.message), recipient=sub(m.recipient))
-            elif isinstance(m, commands.Say):
-                return commands.Say(message=sub(m.message))
-            else:
-                return m
-        return self.copy(
-            caller=sub(self.caller),
-            messages=tuple(sub(m) for m in self.messages),
-            actions=tuple(sub(a) for a in self.actions),
-            args=self.args[:n] + self.args[n+1:]
-        )
-
-    def add_action(self, a, s=None):
-        if s is None:
-            s = str(a)
-        return self.copy(actions=self.actions + (a,), history=self.history + (self,), responses=self.responses + (s,))
-
-    def get_lines(self, debug=False):
-        message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
-        action_lines = [self.display_action(i, a, debug) for i, a in enumerate(self.actions)]
-        return utils.interleave(message_lines, action_lines)
-
-    def fix(self):
-        n = self.pick_action("which of these choices do you want to change?")
-        if n is not None:
-            old = self.responses[n]
-            message = "previously responded '{}'".format(old)
-            self.history[n].get_response(error_message=message, default=old)
-        return n
-
-    def pick_action(self, prompt):
-        t = self.context.terminal
-        t.clear()
-        lines = self.get_lines(debug=True)
-        for line in lines:
-            t.print_line(line)
-        done = False
-        while not done:
-            n = term.get_input(t, prompt=prompt + " ")
-            if n == "none":
-                return None
-            else:
-                try:
-                    n = int(n)
-                    if n >= 0 and n < len(self.actions):
-                        return n
-                    else:
-                        t.print_line("please enter an integer between 0 and {}".format(len(self.actions) - 1))
-                except ValueError:
-                    t.print_line("please type 'none' or an integer")
-
-class Implementer(Env):
-
+class RegisterMachine(object):
     max_registers = 5
+
     help_message = """Valid commands:
 
 "ask Q", e.g. "ask what is one plus one?"
@@ -127,118 +32,132 @@ ask move the agent n/e/s/w in world #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
-    def set_caller(self, caller):
-        caller_pointer = Pointer(n=len(self.args), type=Channel)
-        env = self.copy(args = self.args + (caller,))
-        return env.copy(caller=caller_pointer).clear_unused_pointers()
+    def __init__(self, *, head=None, registers=(), args=(), context=None):
+        self.registers = registers
+        self.args = args
+        self.head = head
+        self.context = context
 
-    def get_lines(self, debug=False):
-        #message_lines = [self.display_message(i, m) for i, m in enumerate(self.messages)]
-        #action_lines = [self.display_action(i, a, debug) for i, a in enumerate(self.actions)]
-        #return utils.interleave(action_lines, message_lines)
-        result = []
-        if self.caller is not None:
-            result.append(str(self.frame_message()))
-            result.append("")
-        for i, a in enumerate(self.actions):
-            m = self.messages[i]
-            prefix = "{}. ".format(i)
-            if len(str(a)) > 0:
-                result.append(prefix + str(a))
-                result.append(" " * len(prefix) + str(m))
+    def set_head(self, head):
+        head, machine = self.contextualize(head)
+        return machine.copy(head=head).delete_unused_args()
+
+    def copy(self, **kwargs):
+        for s in ["registers", "head", "context", "args"]:
+            if s not in kwargs: kwargs[s] = self.__dict__[s]
+        return self.__class__(**kwargs)
+
+    def run(self, budget=float('inf'), use_cache=True):
+        state = self
+        message = None
+        budget_consumed = 1
+        while True:
+            if budget_consumed >= budget:
+                return Message("<<budget exhausted>>"), state, budget_consumed
+            s = get_response(state, error_message=message, use_cache=use_cache, prompt=">> ")
+            command = commands.parse_command(s)
+            if s == "help":
+                message = self.help_message
+            elif command is None:
+                message = "syntax error: {}".format(s)
             else:
-                result.append(prefix + str(m))
+                message = None
+                try:
+                    adder = state.register_adder(s)
+                    retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed, adder)
+                    budget_consumed += step_budget_consumed
+                    if retval is not None:
+                        return retval, state, budget_consumed
+                except commands.BadCommand as e:
+                    message = "{}: {}".format(e, s)
+
+    def contextualize(self, m):
+        new_env_args = self.args
+        def sub(arg):
+            nonlocal new_env_args
+            if isinstance(arg, Pointer):
+                return arg
+            else:
+                new_env_args = new_env_args + (arg,)
+                return Pointer(len(new_env_args) - 1, type=type(arg))
+        return m.transform_args(sub), self.copy(args=new_env_args)
+
+    def register_adder(self, s, contextualize=True):
+        def add_register(state, contents, n=None, instantiate=contextualize, **kwargs):
+            if n is None:
+                n = len(state.registers)
+            if contextualize:
+                new_contents = []
+                for c in contents:
+                    new_c, state = state.contextualize(c)
+                    new_contents.append(new_c)
+                contents = tuple(new_contents)
+            new_register = {"input":s, "context":self, "contents":contents}
+            new_register.update(kwargs)
+            new_registers = state.registers[:n] + (new_register,) + state.registers[n:]
+            result = state.copy(registers=new_registers)
+            new_register["result"] = result
+            return result
+        return add_register
+
+    def add_register(self, s, *args, **kwargs):
+        return self.register_adder(s)(self, *args, **kwargs)
+
+    def delete_register(self, n):
+        return self.copy(registers = self.registers[:n] + self.registers[n+1:]).delete_unused_args()
+
+    def get_lines(self):
+        result = []
+        if self.head is not None:
+            result.append("   {}".format(self.head))
+            result.append("")
+        for i, r in enumerate(self.registers):
+            prefix = "{}. ".format(i)
+            for m in r["contents"]:
+                result.append("{}{}".format(prefix, m))
+                prefix = " " * len(prefix)
             result.append("")
         return result
 
-    def frame_message(self):
-        result = Message("called by []", self.caller)
-        if self.budget != float('inf'):
-            result += Message(" with budget {}".format(self.budget))
-        return result
+    def delete_arg(self, n, new_m=None):
+        def sub(m):
+            if isinstance(m, tuple):
+                return tuple(sub(c) for c in m)
+            if isinstance(m, dict):
+                result = copy(m)
+                result["contents"] = sub(m["contents"])
+                return result
+            elif isinstance(m, Pointer):
+                if m.n < n:
+                    return m
+                elif m.n == n:
+                    assert new_m is not None
+                    return sub(new_m)
+                elif m.n > n:
+                    return Pointer(m.n - 1, m.type)
+            elif isinstance(m, Message):
+                return m.transform_args_recursive(sub)
+            raise ValueError
+        new_args = self.args[:n] + self.args[n+1:]
+        return self.copy(registers=sub(self.registers), head=sub(self.head), args=new_args)
 
-    @staticmethod
-    def display_message(i, m):
-        prefix = "{}. ".format(i)
-        return " " * len("{}. ".format(i))
-        return "{}{}\n".format(prefix, m)
-
-    @staticmethod
-    def display_action(i, a, debug=False):
-        #prefix = "<<< "
-        #if debug:
-        #    prefix = utils.pad_to("{}.".format(i), len(prefix))
-        prefix = "{}. ".format(i)
-        return "{}{}".format(prefix, a)
-
-    def get_response(self, **kwargs):
-        return get_response(self, kind="implement", prompt="<<< ", **kwargs)
-
-    def delete(self, n):
-        def cut(x): return x[:n] + x[n+1:]
-        result = self.copy(
-                messages=cut(self.messages),
-                actions=cut(self.actions),
-                responses=cut(self.responses),
-                history=cut(self.history),
-            )
-        return result.clear_unused_pointers()
-
-    def clear_unused_pointers(self):
+    def delete_unused_args(self):
         in_use =  {k:False for k in range(len(self.args))}
-        def note_used(x):
-            if isinstance(x, Pointer): in_use[x.n] = True
-            return x
-        for m in self.messages + (self.frame_message(),):
-            m.transform_args_recursive(note_used)
-        for a in self.actions:
-            for m in a.messages():
-                m.transform_args_recursive(note_used)
-            for p in a.pointers():
-                in_use[p.n] = True
+        def note_used(m):
+            for arg in m.get_leaf_arguments():
+                if isinstance(arg, Pointer): in_use[arg.n] = True
+        for r in self.registers:
+            for m in r["contents"]:
+                note_used(m)
+        if self.head is not None:
+            note_used(self.head)
         result = self
         for k in reversed(list(range(len(self.args)))):
             if not in_use[k]:
                 result = result.delete_arg(k)
         return result
 
-    def run(self, m, use_cache=True, budget=float('inf')):
-        implementer = self.add_message(m)
-        message = None
-        budget_consumed = 1 #the cost of merely asking a question
-        while True:
-            #while len(implementer.actions) > 4:
-            #    n = implementer.pick_action("which register to clear?")
-            #    if n is not None:
-            #        implementer = implementer.delete(n)
-            if budget_consumed >= budget:
-                return Message("<<budget exhausted>>"), implementer.add_action(commands.Placeholder("<<budget exhausted>>")), budget_consumed
-            s = implementer.get_response(error_message=message, use_cache=use_cache)
-            command = commands.parse_command(s)
-            if s == "help":
-                message = self.help_message
-            elif s == "fix":
-                n = implementer.fix()
-                if n is None:
-                    messsage = "fix was aborted"
-                else:
-                    message = "action {} was changed".format(n)
-            elif command is None:
-                message = "syntax error: {}".format(s)
-
-            else:
-                message = None
-                try:
-                    retval, implementer, step_budget_consumed = command.execute(implementer, budget - budget_consumed)
-                    budget_consumed += step_budget_consumed
-                    if retval is not None:
-                        return retval, implementer, budget_consumed
-                except commands.BadCommand as e:
-                    message = "{}: {}".format(e, s)
-                except RecursionError:
-                    implementer = implementer.add_action(command).add_message(Message("stack overflow"))
-
-class Translator(Env):
+class Answerer(RegisterMachine):
 
     help_message = """Enter a message to pass it through
 
@@ -260,108 +179,48 @@ move the agent n/e/s/w in world #n?
 what cell is directly n/e/s/w of cell #m?
 is cell #n n/e/s/w of cell #m?"""
 
-    def display_message(self, i, m):
-        sender = self.sources[i]
-        return "{} >>> {}".format(sender, m)
-
-    def display_action(self, i, a, debug=False):
-        receiver = self.targets[i]
-        prefix = "{} <<< ".format(receiver)
-        if debug: prefix = utils.pad_to("{}.".format(i), len(prefix))
-        return "{}{}\n".format(prefix, a)
-
-    def get_response(self, **kwargs):
-        prompt = "  <<< "
-        return get_response(self, prompt=prompt, kind="translate", **kwargs)
-
-    def __init__(self, sender="A", receiver="B", sources=(), targets=(), **kwargs):
-        self.sources = sources
-        self.targets = targets
-        self.sender = sender
-        self.receiver = receiver
-        return super().__init__(**kwargs)
-
-    def copy(self, **kwargs):
-        for s in ["sources", 'targets', 'sender', 'receiver']:
-            if s not in kwargs: kwargs[s] = self.__dict__[s]
-        return super().copy(**kwargs)
-
-    def add_source(self, source=None):
-        if source is None: source = self.sender
-        return self.copy(sources=self.sources + (source,))
-
-    def add_target(self, target=None):
-        if target is None: target = self.receiver
-        return self.copy(targets=self.targets + (target,))
-
-    def swap(self):
-        return self.copy(receiver=self.sender, sender=self.receiver)
-
-    def run(self, m, use_cache=True):
-        translator = self.add_message(m).add_source()
+    def step(self, default=None):
+        answerer = self
         message = None
         while True:
-            s = translator.get_response(error_message=message, use_cache=use_cache)
+            s = get_response(answerer,
+                    kind="translate", default=default, error_message=message,
+                    prompt="   -> ")
+            m = commands.parse_message(s)
             viewer = commands.parse_view(s)
-            translation = commands.parse_message(s)
-            fixer = commands.parse_fix(s)
-            replier = commands.parse_reply(s)
             if s == "help":
                 message = self.help_message
-            elif fixer is not None:
-                message = fixer.fix(translator)
-            elif replier is not None:
-                result = replier.message.instantiate(translator.args)
-                translator = translator.add_target(self.sender)
-                return None, result, translator.add_action(translation)
+            elif m is not None:
+                try:
+                    return s, m, m.instantiate(answerer.args), answerer
+                except BadInstantiation:
+                    message = "invalid reference: {}".format(s)
             elif viewer is not None:
                 try:
-                    translator = viewer.view(translator)
+                    answerer = viewer.view(answerer)
                     message = None
                 except commands.BadCommand as e:
                     message = "{}: {}".format(e, s)
-            elif translation is not None:
-                try:
-                    result = translation.instantiate(translator.args)
-                    translator = translator.add_target()
-                    return result, None, translator.add_action(translation)
-                except RecursionError:
-                    message = "stack overflow on {}".format(s)
-                except BadInstantiation:
-                    message = "syntax error: {}".format(s)
             else:
                 message = "syntax error: {}".format(s)
 
-def ask_Q(Q, context, sender, receiver=None, translator=None, nominal_budget=float("inf"), invisible_budget=float("inf")):
-    translator = Translator(context=context) if translator is None else translator
-    receiver = Implementer(context=context).add_action(commands.Placeholder()) if receiver is None else receiver
-    budget_consumed = 0
-    Q, A, translator = translator.run(Q)
-    translator = translator.swap()
-    while True:
-        if A is not None:
-            A = messages.address_answer(A, Channel(receiver, translator))
-            return A, budget_consumed
-        if Q is not None:
-            builtin_result = builtin_handler(Q)
-            Q = messages.address_question(Q)
-            receiver = receiver.set_caller(Channel(sender, translator)).copy(budget=nominal_budget)
-            if builtin_result is not None:
-                receiver = receiver.add_message(Q).add_action(commands.Placeholder("<<response from built-in function>>"))
-                A = builtin_result
-            else:
-                A, receiver, step_budget_consumed = receiver.run(Q, budget=min(nominal_budget, invisible_budget-budget_consumed))
-                budget_consumed += step_budget_consumed
-            if passes_through_translation(A):
-                Q = None
-                translator = translator.add_message(A).add_action(A).add_source().add_target()
-            else:
-                A, Q, translator = translator.run(A)
-
-def passes_through_translation(A):
-    if A.matches("<<budget exhausted>>"):
-        return True
-    return False
+    def run(self, nominal_budget=float('inf'), budget=float('inf')):
+        s, Q_input, Q, answerer = self.step()
+        answerer = answerer.add_register(s, (Message("-> ") + Q_input,))
+        builtin_result = builtin_handler(Q)
+        if builtin_result is not None:
+            A_raw = builtin_result
+            budget_consumed = 1
+            machine = None
+        else:
+            addressed_Q = Message("Q[{}]: ".format(nominal_budget)) + Q
+            machine = RegisterMachine(context=answerer.context).set_head(addressed_Q)
+            A_raw, machine, budget_consumed = machine.run(min(budget, nominal_budget))
+        A_raw, answerer = answerer.contextualize(A_raw)
+        answerer = answerer.add_register(s, (Message("A: ") + A_raw,), machine=machine)
+        s, A_input, A, answerer = answerer.step(default=str(A_raw))
+        answerer = answerer.add_register(s, (Message("-> ") + A_input,))
+        return A, answerer, budget_consumed
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in world []?"):
@@ -416,7 +275,7 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
-def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt="<<< ", default=None):
+def get_response(env, kind="implement", use_cache=True, replace_old=False, error_message=None, prompt=">>> ", default=None):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -438,7 +297,6 @@ def get_response(env, kind="implement", use_cache=True, replace_old=False, error
             if default is None:
                 default = ""
         if error_message is not None:
-            t.print_line("")
             t.print_line(error_message)
             t.print_line("")
         response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default)
@@ -449,11 +307,11 @@ def main():
     with Context() as context:
         world = worlds.default_world()
         init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        return Implementer(context=context).add_action(commands.Placeholder("")).run(init_message, use_cache=False)
+        return RegisterMachine(context=context).set_head(init_message).run(use_cache=False)
 
 if __name__ == "__main__":
     try:
-        message, environment = main()
+        message, environment, budget_consumed = main()
         import IPython
         from worlds import display_history
         IPython.embed()

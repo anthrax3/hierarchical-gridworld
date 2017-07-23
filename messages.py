@@ -87,6 +87,15 @@ class Message(Referent):
     def transform_args(self, f):
         return Message(self.text, *[f(a) for a in self.args])
 
+    def get_leaf_arguments(m, seen=None):
+        if seen is None: seen = set()
+        seen.add(m)
+        for arg in m.args:
+            if isinstance(arg, Message):
+                yield from get_leaf_arguments(arg, seen)
+            else:
+                yield arg
+
 class WorldMessage(Message):
 
     def __init__(self, world):
