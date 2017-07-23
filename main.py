@@ -32,18 +32,13 @@ ask move the agent n/e/s/w in world #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
-    def __init__(self, *, head=None, registers=(), args=(), context=None):
+    def __init__(self, registers=(), args=(), context=None):
         self.registers = registers
         self.args = args
-        self.head = head
         self.context = context
 
-    def set_head(self, head):
-        head, machine = self.contextualize(head)
-        return machine.copy(head=head).delete_unused_args()
-
     def copy(self, **kwargs):
-        for s in ["registers", "head", "context", "args"]:
+        for s in ["registers", "context", "args"]:
             if s not in kwargs: kwargs[s] = self.__dict__[s]
         return self.__class__(**kwargs)
 
@@ -83,7 +78,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         return m.transform_args(sub), self.copy(args=new_env_args)
 
     def register_adder(self, s, contextualize=True):
-        def add_register(state, contents, n=None, instantiate=contextualize, **kwargs):
+        def add_register(state, contents, n=None, contextualize=contextualize, **kwargs):
             if n is None:
                 n = len(state.registers)
             if contextualize:
@@ -100,17 +95,14 @@ ask is cell #n n/e/s/w of cell #m?"""
             return result
         return add_register
 
-    def add_register(self, s, *args, **kwargs):
-        return self.register_adder(s)(self, *args, **kwargs)
+    def add_register(self, contents, s="", *args, **kwargs):
+        return self.register_adder(s)(self, contents, *args, **kwargs)
 
     def delete_register(self, n):
         return self.copy(registers = self.registers[:n] + self.registers[n+1:]).delete_unused_args()
 
     def get_lines(self):
         result = []
-        if self.head is not None:
-            result.append("   {}".format(self.head))
-            result.append("")
         for i, r in enumerate(self.registers):
             prefix = "{}. ".format(i)
             for m in r["contents"]:
@@ -139,18 +131,14 @@ ask is cell #n n/e/s/w of cell #m?"""
                 return m.transform_args_recursive(sub)
             raise ValueError
         new_args = self.args[:n] + self.args[n+1:]
-        return self.copy(registers=sub(self.registers), head=sub(self.head), args=new_args)
+        return self.copy(registers=sub(self.registers), args=new_args)
 
     def delete_unused_args(self):
         in_use =  {k:False for k in range(len(self.args))}
-        def note_used(m):
-            for arg in m.get_leaf_arguments():
-                if isinstance(arg, Pointer): in_use[arg.n] = True
         for r in self.registers:
             for m in r["contents"]:
-                note_used(m)
-        if self.head is not None:
-            note_used(self.head)
+                for arg in m.get_leaf_arguments():
+                    if isinstance(arg, Pointer): in_use[arg.n] = True
         result = self
         for k in reversed(list(range(len(self.args)))):
             if not in_use[k]:
@@ -206,7 +194,7 @@ is cell #n n/e/s/w of cell #m?"""
 
     def run(self, nominal_budget=float('inf'), budget=float('inf')):
         s, Q_input, Q, answerer = self.step()
-        answerer = answerer.add_register(s, (Message("-> ") + Q_input,))
+        answerer = answerer.add_register((Message("-> ") + Q_input,), s, contextualize=False)
         builtin_result = builtin_handler(Q)
         if builtin_result is not None:
             A_raw = builtin_result
@@ -214,12 +202,11 @@ is cell #n n/e/s/w of cell #m?"""
             machine = None
         else:
             addressed_Q = Message("Q[{}]: ".format(nominal_budget)) + Q
-            machine = RegisterMachine(context=answerer.context).set_head(addressed_Q)
+            machine = RegisterMachine(context=answerer.context).add_register((addressed_Q,))
             A_raw, machine, budget_consumed = machine.run(min(budget, nominal_budget))
-        A_raw, answerer = answerer.contextualize(A_raw)
-        answerer = answerer.add_register(s, (Message("A: ") + A_raw,), machine=machine)
-        s, A_input, A, answerer = answerer.step(default=str(A_raw))
-        answerer = answerer.add_register(s, (Message("-> ") + A_input,))
+        answerer = answerer.add_register((Message("A: ") + A_raw,), s, machine=machine)
+        s, A_input, A, answerer = answerer.step()
+        answerer = answerer.add_register((Message("-> ") + A_input,), s, contextualize=False)
         return A, answerer, budget_consumed
 
 def builtin_handler(Q):
@@ -307,7 +294,7 @@ def main():
     with Context() as context:
         world = worlds.default_world()
         init_message = messages.Message("[] is a world", messages.WorldMessage(world))
-        return RegisterMachine(context=context).set_head(init_message).run(use_cache=False)
+        return RegisterMachine(context=context).add_register((init_message,)).run(use_cache=False)
 
 if __name__ == "__main__":
     try:

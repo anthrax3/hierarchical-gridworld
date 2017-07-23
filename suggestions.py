@@ -114,7 +114,7 @@ class TranslateSuggester(Suggester):
         super().__init__("translate")
 
     def default(self, env, obs):
-        return str(messages.strip_prefix(env.head))
+        return str(messages.strip_prefix(env.registers[-1]['contents'][0]))
 
 
 def init_database():

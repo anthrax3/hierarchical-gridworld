@@ -28,7 +28,7 @@ class Ask(Command):
         if self.budget is None: self.budget = round_budget(budget)
         try:
             question = self.question.instantiate(env.args)
-            answerer = main.Answerer(context=env.context).set_head(Message('Q: ') + question)
+            answerer = main.Answerer(context=env.context).add_register((Message('Q: ') + question,))
             answer, answerer, budget_consumed = answerer.run(self.budget, budget)
             answer, env = env.contextualize(answer)
             addressed_question = Message('Q[{}]: '.format(self.budget)) + self.question
@@ -82,7 +82,14 @@ class Clear(Command):
         return "clear {}".format(self.n)
 
     def execute(self, env, budget, register_adder):
-        return None, env.delete_register(self.n), 0
+        return None, clear(self.n, env), 0
+
+def clear(n, env):
+    if n == 0:
+        raise BadCommand("can't remove register 0")
+    if n < 0 or n >= len(env.registers):
+        raise BadCommand("invalid index")
+    return env.delete_register(n)
 
 class Replace(Command):
 
@@ -92,14 +99,12 @@ class Replace(Command):
 
     def execute(self, env, budget, register_adder):
         try:
-            env = register_adder(env, (message,))
+            env = register_adder(env, (self.message,))
             removed = []
             for n in self.ns:
                 removed.append(n)
                 n -= len([m for m in removed if m < n])
-                if n < 0 or n >= len(env.args):
-                    raise BadCommand("invalid index")
-                env = env.delete(n)
+                env = clear(n, env)
             return None, env, 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
@@ -222,7 +227,7 @@ clear_command = (raw("clear")) + w + number
 clear_command.setParseAction(lambda xs : Clear(xs[0]))
 
 replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(w + raw("and") + w + number) + w + raw("with") + w + message
-replace_command.setParseAction(lambda xs : Replace(xs[0], xs[1:-1], xs[-1]))
+replace_command.setParseAction(lambda xs : Replace(xs[:-1], xs[-1]))
 
 say_command = (raw("say")) + w + message
 say_command.setParseAction(lambda xs : Say(xs[0]))
