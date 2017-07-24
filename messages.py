@@ -22,15 +22,21 @@ class Message(Referent):
 
     symbol = "#"
 
-    def __init__(self, text, *args, pending=False):
+    def __init__(self, text, args=(), pending=False):
         if isinstance(text, six.string_types):
             text = tuple(text.split("[]"))
-        args = tuple(args)
+        if isinstance(args, Referent):
+            args = (args,)
         self.text = text
         self.args = args 
         self.pending = pending
         if not pending:
             assert self.well_formed()
+
+    def copy(self, **kwargs):
+        for k in ["text", 'args', "pending"]:
+            if k not in kwargs: kwargs[k] = self.__dict__[k]
+        return Message(**kwargs)
 
     def finalize_args(self, args):
         assert self.pending
@@ -54,7 +60,7 @@ class Message(Referent):
 
     def __add__(self, other):
         joined = self.text[-1] + other.text[0]
-        return Message(self.text[:-1] + (joined,) + other.text[1:], *(self.args + other.args))
+        return Message(self.text[:-1] + (joined,) + other.text[1:], self.args + other.args)
 
     def format(self, names):
         return "".join(interleave(self.text, names))
@@ -85,14 +91,14 @@ class Message(Referent):
         return result
 
     def transform_args(self, f):
-        return Message(self.text, *[f(a) for a in self.args])
+        return Message(self.text, tuple(f(a) for a in self.args))
 
     def get_leaf_arguments(m, seen=None):
         if seen is None: seen = set()
         seen.add(m)
         for arg in m.args:
             if isinstance(arg, Message):
-                yield from get_leaf_arguments(arg, seen)
+                yield from arg.get_leaf_arguments(seen)
             else:
                 yield arg
 
@@ -164,7 +170,7 @@ def strip_prefix(message, sep=": "):
             new_args = message.args[i:]
             new_t = sep.join(t.split(sep)[1:])
             new_text = (new_t,) + message.text[i+1:]
-            return Message(new_text, *new_args)
+            return Message(new_text, new_args)
     return message
 
 def submessages(ref, include_root=True, seen=None):

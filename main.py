@@ -56,21 +56,23 @@ ask move the agent n/e/s/w in grid #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
-    def __init__(self, registers=(), args=(), context=None, use_cache=True):
+    def __init__(self, registers=(), args=(), context=None, use_cache=True, budget=float('inf')):
         self.registers = registers
         self.args = args
         self.context = context
         self.use_cache = use_cache
+        self.budget = budget
 
     def copy(self, **kwargs):
-        for s in ["registers", "context", "args", "use_cache"]:
+        for s in ["registers", "context", "args", "use_cache", "budget"]:
             if s not in kwargs: kwargs[s] = self.__dict__[s]
         return self.__class__(**kwargs)
 
-    def run(self, budget=float('inf')):
+    def run(self, nominal_budget=float('inf'), budget=float('inf')):
         state = self
         message = None
         budget_consumed = self.initial_budget_consumption
+        budget = min(budget, nominal_budget)
         fixed = False 
         src = None
         def ret(m):
@@ -79,8 +81,9 @@ ask is cell #n n/e/s/w of cell #m?"""
             return m, src, state, budget_consumed
         while True:
             if budget_consumed >= budget:
-                src = Event(state, "<<budget exhausted>>")
-                return ret(Message("<<budget exhausted>>"))
+                message = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
+                src = Event(state, message)
+                return ret(Message(message))
             s = get_response(state, error_message=message, use_cache=state.use_cache, prompt=">> ", kind=state.kind, default=state.get_default())
             command = commands.parse_command(s)
             if s == "help":
@@ -102,6 +105,14 @@ ask is cell #n n/e/s/w of cell #m?"""
                         return ret(retval)
                 except commands.BadCommand as e:
                     message = "{}: {}".format(e, s)
+
+    def dump_and_print(message):
+        self.context.terminal.clear()
+        for line in self.get_lines():
+            self.context.terminal.print_line(line)
+        self.context.terminal.print_line(message)
+        term.get_input(self.context.terminal)
+        return
 
     def contextualize(self, m):
         new_env_args = self.args
@@ -177,18 +188,15 @@ ask is cell #n n/e/s/w of cell #m?"""
         return result
 
     def make_child(self, Q, budget=float('inf'), src=None):
-        env = Translator(context=self.context)
+        env = Translator(context=self.context, budget=budget)
         return env.add_register(env.make_head(Q, budget), src=src)
 
     def make_head(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
 
-    def default_budget(self, budget):
-        if budget == float('inf'):
-            return float('inf')
-        if budget <= 10:
-            return 10
-        return 10**int(log(budget) / log(10))
+    def default_child_budget(self):
+        if self.budget == float('inf') or self.budget == 10: return self.budget
+        return self.budget // 10
 
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
@@ -203,15 +211,11 @@ class Translator(RegisterMachine):
     initial_budget_consumption = 0
 
     def make_child(self, Q, budget=float('inf'), src=None):
-        env = RegisterMachine(context=self.context)
+        env = RegisterMachine(context=self.context, budget=budget)
         return env.add_register(env.make_head(Q, budget), src=src)
 
-    def default_budget(self, budget):
-        if budget == float('inf'):
-            return float('inf')
-        if budget <= 10:
-            return 10
-        return 10**int(log(budget) / log(10))
+    def default_child_budget(self):
+        return self.budget
 
     def make_head(self, Q, budget=float('inf')):
         return Message('Q[concrete]: ') + Q
@@ -316,12 +320,3 @@ def main():
         world = worlds.default_world()
         init_message = messages.Message("[] is a grid", messages.WorldMessage(world))
         return RegisterMachine(context=context, use_cache=False).add_register(init_message).run()
-
-if __name__ == "__main__":
-    try:
-        message, src, environment, budget_consumed = main()
-        import IPython
-        from worlds import display_history
-        IPython.embed()
-    except (KeyboardInterrupt, FixedError):
-        pass
