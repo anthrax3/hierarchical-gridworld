@@ -3,7 +3,6 @@ from utils import unweave
 from messages import Message, Pointer, Channel
 import messages
 import main
-from math import log
 
 class BadCommand(Exception):
     def __init__(self, explanation):
@@ -35,7 +34,7 @@ class Ask(Command):
             addressed_question = env.render_question(self.question, budget=self.budget)
             addressed_answer = Message('A: ') + answer
             env = env.add_register(addressed_question, addressed_answer, src=src,
-                    result_src=result_src, contextualize=False)
+                    result_src=result_src, cmd=self, contextualize=False)
             return None, env, budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
@@ -62,7 +61,7 @@ class Say(Command):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         try:
-            return None, env.add_register(message, src=src), 0
+            return None, env.add_register(message, cmd=self, src=src), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -92,7 +91,7 @@ class Replace(Command):
 
     def execute(self, env, budget, src):
         try:
-            env = env.add_register(self.message, src=src)
+            env = env.add_register(self.message, cmd=Say(self.message), src=src)
             removed = []
             for n in self.ns:
                 removed.append(n)
@@ -111,7 +110,7 @@ class Reply(Command):
         try:
             answer = self.message.instantiate(env.args)
             given_answer = Message("A: ") + self.message
-            return answer, env.add_register(given_answer, src=src, contextualize=False), 0
+            return answer, env.add_register(given_answer, src=src, cmd=self, contextualize=False), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -132,7 +131,7 @@ class Raise(Command):
         else:
             old_src = register.src
         error = Message("Error: {}".format(old_src.command_str))
-        state = old_src.context.add_register(error, message, src=old_src, result_src=src)
+        state = old_src.context.add_register(error, message, src=old_src, result_src=src, cmd=self)
         return None, state, 0
 
 class Fix(Command):
@@ -140,10 +139,31 @@ class Fix(Command):
     def __init__(self, n):
         self.n = n
 
+class More(Command):
+
+    def __init__(self, n):
+        self.n = n
+
     def execute(self, env, budget, src):
-        env = env.registers[self.n].src.context
-        env.clear_response()
-        return None, env, 0
+        register = env.registers[self.n]
+        if not isinstance(register.cmd, Ask) or register.cmd.budget == float("inf"):
+            raise BadCommand("can only give more time to questions with finite budget")
+        new_budget = register.cmd.budget
+        question = register.cmd.question.instantiate(env.args)
+        new_budget *= 10
+        new_env = register.result_src.context
+        new_env = new_env.add_register(new_env.make_head(question, new_budget), src=src, replace=True, n=0)
+        if isinstance(new_env, main.Translator):
+            _, new_env, budget_consumed = More(1).execute(new_env, budget, src) #XXX hacky
+            result, result_src, new_env, step_budget_consumed = new_env.run(budget - budget_consumed)
+            budget_consumed += step_budget_consumed
+        else:
+            result, result_src, new_env, budget_consumed = new_env.run(min(budget, new_budget))
+        result, env = env.contextualize(result)
+        env = env.add_register(env.render_question(register.cmd.question, new_budget), result,
+                src=src, result_src=result_src, contextualize=False, replace=True, n=self.n)
+        assert False
+        return None, env, budget_consumed
     
 #----parsing
 
@@ -205,10 +225,10 @@ budget_modifier.setParseAction(lambda xs : ("budget", xs[0]))
 ask_modifiers = pp.Optional(budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 
-ask_command = (raw("ask")) + ask_modifiers + w + message
+ask_command = (raw("ask") | raw("Q")) + ask_modifiers + w + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply")) + w + message
+reply_command = (raw("reply") | raw("A")) + w + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
 clear_command = (raw("clear")) + w + number
@@ -229,4 +249,7 @@ raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
 fix_command = raw("fix") + w + number
 fix_command.setParseAction(lambda xs : Fix(xs[0]))
 
-command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command
+more_command = raw("more") + w + number
+more_command.setParseAction(lambda xs : More(xs[0]))
+
+command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command | more_command

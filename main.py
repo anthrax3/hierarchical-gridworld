@@ -7,12 +7,19 @@ import worlds
 import term
 import suggestions
 from copy import copy
+from math import log
 
 class Register(object):
-    def __init__(self, contents, src=None, result_src=None):
+    def __init__(self, contents, src=None, result_src=None, cmd=None):
         self.contents = contents
         self.src = src
         self.result_src = result_src
+        self.cmd = cmd
+
+    def copy(self, **kwargs):
+        for k in ["contents", "src", "result_src", "cmd"]:
+            if k not in kwargs: kwargs[k] = self.__dict__[k]
+        return self.__class__(**kwargs)
 
 class Event(object):
     def __init__(self, context, command_str):
@@ -24,6 +31,7 @@ class FixedError(Exception):
 
 class RegisterMachine(object):
     max_registers = 5
+    initial_budget_consumption = 1
     kind = "implement"
     help_message = """Valid commands:
 
@@ -62,7 +70,7 @@ ask is cell #n n/e/s/w of cell #m?"""
     def run(self, budget=float('inf')):
         state = self
         message = None
-        budget_consumed = 1
+        budget_consumed = self.initial_budget_consumption
         fixed = False 
         src = None
         def ret(m):
@@ -71,6 +79,7 @@ ask is cell #n n/e/s/w of cell #m?"""
             return m, src, state, budget_consumed
         while True:
             if budget_consumed >= budget:
+                src = Event(state, "<<budget exhausted>>")
                 return ret(Message("<<budget exhausted>>"))
             s = get_response(state, error_message=message, use_cache=state.use_cache, prompt=">> ", kind=state.kind, default=state.get_default())
             command = commands.parse_command(s)
@@ -81,7 +90,6 @@ ask is cell #n n/e/s/w of cell #m?"""
             elif isinstance(command, commands.Fix):
                 old_src = state.registers[command.n].src
                 state = old_src.context
-                state.clear_response()
                 message = "previously: {}".format(old_src.command_str)
                 fixed = True
             else:
@@ -106,7 +114,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                 return Pointer(len(new_env_args) - 1, type=type(arg))
         return m.transform_args(sub), self.copy(args=new_env_args)
 
-    def add_register(self, *contents, n=None, contextualize=True, **kwargs):
+    def add_register(self, *contents, n=None, contextualize=True, replace=False, **kwargs):
         state = self
         if n is None:
             n = len(state.registers)
@@ -117,12 +125,15 @@ ask is cell #n n/e/s/w of cell #m?"""
                 new_contents.append(new_c)
             contents = tuple(new_contents)
         new_register = Register(contents, **kwargs)
-        new_registers = state.registers[:n] + (new_register,) + state.registers[n:]
-        return state.copy(registers=new_registers)
+        m = n+1 if replace else n
+        new_registers = state.registers[:n] + (new_register,) + state.registers[m:]
+        state = state.copy(registers=new_registers)
+        if replace: state = state.delete_unused_args()
+        return state
 
     def delete_register(self, n):
         return self.copy(registers = self.registers[:n] + self.registers[n+1:]).delete_unused_args()
-
+    
     def get_lines(self):
         result = []
         for i, r in enumerate(self.registers):
@@ -137,10 +148,8 @@ ask is cell #n n/e/s/w of cell #m?"""
         def sub(m):
             if isinstance(m, tuple):
                 return tuple(sub(c) for c in m)
-            if isinstance(m, dict):
-                result = copy(m)
-                result["contents"] = sub(m["contents"])
-                return result
+            if isinstance(m, Register):
+                return m.copy(contents=sub(m.contents))
             elif isinstance(m, Pointer):
                 if m.n < n:
                     return m
@@ -167,12 +176,12 @@ ask is cell #n n/e/s/w of cell #m?"""
                 result = result.delete_arg(k)
         return result
 
-    def clear_response(self):
-        obs = "\n".join(self.get_lines())
-        self.context.suggesters[self.kind].delete_cached_response(obs)
-
     def make_child(self, Q, budget=float('inf'), src=None):
-        return Answerer(context=self.context).add_register(Message('Q[concrete]: ') + Q, src=src)
+        env = Translator(context=self.context)
+        return env.add_register(env.make_head(Q, budget), src=src)
+
+    def make_head(self, Q, budget=float('inf')):
+        return Message('Q[{}]: '.format(budget)) + Q
 
     def default_budget(self, budget):
         if budget == float('inf'):
@@ -187,29 +196,25 @@ ask is cell #n n/e/s/w of cell #m?"""
     def get_default(self):
         return ""
 
-class Answerer(RegisterMachine):
+class Translator(RegisterMachine):
 
     kind = "translate"
-    help_message = """Enter a message to pass it through
-
-Valid commands:
-
-"view n", e.g. "view 0", expand the pointer #n
-
-Valid messages: text interspersed with pointers,
-such as "#1", or with sub-messages enclosed in parentheses,
-such as "(one more than #2)".
-
-Some messages will be handled automatically:
-
-what cell contains the agent in grid #n?
-what is in cell #n in grid #m?
-move the agent n/e/s/w in grid #n?
-what cell is directly n/e/s/w of cell #m?
-is cell #n n/e/s/w of cell #m?"""
+    max_registers = 3
+    initial_budget_consumption = 0
 
     def make_child(self, Q, budget=float('inf'), src=None):
-        return RegisterMachine(context=self.context).add_register(Message('Q[{}]: '.format(budget)) + Q, src=src)
+        env = RegisterMachine(context=self.context)
+        return env.add_register(env.make_head(Q, budget), src=src)
+
+    def default_budget(self, budget):
+        if budget == float('inf'):
+            return float('inf')
+        if budget <= 10:
+            return 10
+        return 10**int(log(budget) / log(10))
+
+    def make_head(self, Q, budget=float('inf')):
+        return Message('Q[concrete]: ') + Q
 
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[abstract]: '.format(budget)) + Q
@@ -218,55 +223,11 @@ is cell #n n/e/s/w of cell #m?"""
         m = self.registers[-1].contents[-1]
         s = str(messages.strip_prefix(m))
         if utils.starts_with("A", m.text[0]):
-            return "reply " + s
+            return "A " + s
         elif utils.starts_with("Q", m.text[0]):
-            return "ask " + s
+            return "Q " + s
         else:
             return ""
-
-    #def step(self, default=None):
-    #    answerer = self
-    #    message = None
-    #    while True:
-    #        s = get_response(answerer,
-    #                kind=self.kind, default=default, error_message=message,
-    #                prompt="   -> ")
-    #        m = commands.parse_message(s)
-    #        viewer = commands.parse_view(s)
-    #        if s == "help":
-    #            message = self.help_message
-    #        elif m is not None:
-    #            try:
-    #                return s, m, m.instantiate(answerer.args), answerer
-    #            except BadInstantiation:
-    #                message = "invalid reference: {}".format(s)
-    #        elif viewer is not None:
-    #            try:
-    #                answerer = viewer.view(answerer)
-    #                message = None
-    #            except commands.BadCommand as e:
-    #                message = "{}: {}".format(e, s)
-    #        else:
-    #            message = "syntax error: {}".format(s)
-
-    #def run(self, nominal_budget=float('inf'), budget=float('inf')):
-    #    s, Q_input, Q, answerer = self.step()
-    #    src = Event(command_str=s, context=answerer)
-    #    answerer = answerer.add_register(Message("-> ") + Q_input, src=src, contextualize=False)
-    #    builtin_result = builtin_handler(Q)
-    #    if builtin_result is not None:
-    #        A_raw = builtin_result
-    #        budget_consumed = 1
-    #        machine = None
-    #    else:
-    #        addressed_Q = Message("Q[{}]: ".format(nominal_budget)) + Q
-    #        machine = RegisterMachine(context=answerer.context).add_register(addressed_Q, src=src)
-    #        A_raw, result_src, machine, budget_consumed = machine.run(min(budget, nominal_budget))
-    #    answerer = answerer.add_register(Message("A: ") + A_raw, result_src=result_src)
-    #    s, A_input, A, answerer = answerer.step()
-    #    src = Event(command_str=s, context=answerer)
-    #    answerer = answerer.add_register(Message("-> ") + A_input, src=src, contextualize=False)
-    #    return A, src, answerer, budget_consumed
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in grid []?"):
