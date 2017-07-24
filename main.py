@@ -19,6 +19,9 @@ class Event(object):
         self.context = context
         self.command_str = command_str
 
+class FixedError(Exception):
+    pass
+
 class RegisterMachine(object):
     max_registers = 5
     kind = "implement"
@@ -63,13 +66,13 @@ ask is cell #n n/e/s/w of cell #m?"""
         fixed = False 
         src = None
         def ret(m):
-            if fixed: #XXX could often recover from fixing, just need to figure out when
-                raise Exception("Fixed error")
+            if fixed: #TODO recover from fixing
+                raise FixedError()
             return m, src, state, budget_consumed
         while True:
             if budget_consumed >= budget:
                 return ret(Message("<<budget exhausted>>"))
-            s = get_response(state, error_message=message, use_cache=state.use_cache, prompt=">> ", kind=self.kind)
+            s = get_response(state, error_message=message, use_cache=state.use_cache, prompt=">> ", kind=state.kind, default=state.get_default())
             command = commands.parse_command(s)
             if s == "help":
                 message = self.help_message
@@ -168,6 +171,22 @@ ask is cell #n n/e/s/w of cell #m?"""
         obs = "\n".join(self.get_lines())
         self.context.suggesters[self.kind].delete_cached_response(obs)
 
+    def make_child(self, Q, budget=float('inf'), src=None):
+        return Answerer(context=self.context).add_register(Message('Q[concrete]: ') + Q, src=src)
+
+    def default_budget(self, budget):
+        if budget == float('inf'):
+            return float('inf')
+        if budget <= 10:
+            return 10
+        return 10**int(log(budget) / log(10))
+
+    def render_question(self, Q, budget=float('inf')):
+        return Message('Q[{}]: '.format(budget)) + Q
+    
+    def get_default(self):
+        return ""
+
 class Answerer(RegisterMachine):
 
     kind = "translate"
@@ -189,49 +208,65 @@ move the agent n/e/s/w in grid #n?
 what cell is directly n/e/s/w of cell #m?
 is cell #n n/e/s/w of cell #m?"""
 
-    def step(self, default=None):
-        answerer = self
-        message = None
-        while True:
-            s = get_response(answerer,
-                    kind=self.kind, default=default, error_message=message,
-                    prompt="   -> ")
-            m = commands.parse_message(s)
-            viewer = commands.parse_view(s)
-            if s == "help":
-                message = self.help_message
-            elif m is not None:
-                try:
-                    return s, m, m.instantiate(answerer.args), answerer
-                except BadInstantiation:
-                    message = "invalid reference: {}".format(s)
-            elif viewer is not None:
-                try:
-                    answerer = viewer.view(answerer)
-                    message = None
-                except commands.BadCommand as e:
-                    message = "{}: {}".format(e, s)
-            else:
-                message = "syntax error: {}".format(s)
+    def make_child(self, Q, budget=float('inf'), src=None):
+        return RegisterMachine(context=self.context).add_register(Message('Q[{}]: '.format(budget)) + Q, src=src)
 
-    def run(self, nominal_budget=float('inf'), budget=float('inf')):
-        s, Q_input, Q, answerer = self.step()
-        src = Event(command_str=s, context=answerer)
-        answerer = answerer.add_register(Message("-> ") + Q_input, src=src, contextualize=False)
-        builtin_result = builtin_handler(Q)
-        if builtin_result is not None:
-            A_raw = builtin_result
-            budget_consumed = 1
-            machine = None
+    def render_question(self, Q, budget=float('inf')):
+        return Message('Q[abstract]: '.format(budget)) + Q
+
+    def get_default(self):
+        m = self.registers[-1].contents[-1]
+        s = str(messages.strip_prefix(m))
+        if utils.starts_with("A", m.text[0]):
+            return "reply " + s
+        elif utils.starts_with("Q", m.text[0]):
+            return "ask " + s
         else:
-            addressed_Q = Message("Q[{}]: ".format(nominal_budget)) + Q
-            machine = RegisterMachine(context=answerer.context).add_register(addressed_Q, src=src)
-            A_raw, result_src, machine, budget_consumed = machine.run(min(budget, nominal_budget))
-        answerer = answerer.add_register(Message("A: ") + A_raw, result_src=result_src)
-        s, A_input, A, answerer = answerer.step()
-        src = Event(command_str=s, context=answerer)
-        answerer = answerer.add_register(Message("-> ") + A_input, src=src, contextualize=False)
-        return A, src, answerer, budget_consumed
+            return ""
+
+    #def step(self, default=None):
+    #    answerer = self
+    #    message = None
+    #    while True:
+    #        s = get_response(answerer,
+    #                kind=self.kind, default=default, error_message=message,
+    #                prompt="   -> ")
+    #        m = commands.parse_message(s)
+    #        viewer = commands.parse_view(s)
+    #        if s == "help":
+    #            message = self.help_message
+    #        elif m is not None:
+    #            try:
+    #                return s, m, m.instantiate(answerer.args), answerer
+    #            except BadInstantiation:
+    #                message = "invalid reference: {}".format(s)
+    #        elif viewer is not None:
+    #            try:
+    #                answerer = viewer.view(answerer)
+    #                message = None
+    #            except commands.BadCommand as e:
+    #                message = "{}: {}".format(e, s)
+    #        else:
+    #            message = "syntax error: {}".format(s)
+
+    #def run(self, nominal_budget=float('inf'), budget=float('inf')):
+    #    s, Q_input, Q, answerer = self.step()
+    #    src = Event(command_str=s, context=answerer)
+    #    answerer = answerer.add_register(Message("-> ") + Q_input, src=src, contextualize=False)
+    #    builtin_result = builtin_handler(Q)
+    #    if builtin_result is not None:
+    #        A_raw = builtin_result
+    #        budget_consumed = 1
+    #        machine = None
+    #    else:
+    #        addressed_Q = Message("Q[{}]: ".format(nominal_budget)) + Q
+    #        machine = RegisterMachine(context=answerer.context).add_register(addressed_Q, src=src)
+    #        A_raw, result_src, machine, budget_consumed = machine.run(min(budget, nominal_budget))
+    #    answerer = answerer.add_register(Message("A: ") + A_raw, result_src=result_src)
+    #    s, A_input, A, answerer = answerer.step()
+    #    src = Event(command_str=s, context=answerer)
+    #    answerer = answerer.add_register(Message("-> ") + A_input, src=src, contextualize=False)
+    #    return A, src, answerer, budget_consumed
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in grid []?"):
@@ -311,7 +346,8 @@ def get_response(env, kind, use_cache=True, replace_old=False, error_message=Non
             t.print_line(error_message)
             t.print_line("")
         response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default)
-        if use_cache: suggester.set_cached_response(obs, response)
+        if use_cache:
+            suggester.set_cached_response(obs, response)
     return response
 
 def main():
@@ -326,5 +362,5 @@ if __name__ == "__main__":
         import IPython
         from worlds import display_history
         IPython.embed()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, FixedError):
         pass

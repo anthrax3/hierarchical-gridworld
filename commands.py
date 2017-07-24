@@ -25,26 +25,20 @@ class Ask(Command):
     def execute(self, env, budget, src):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
-        if self.budget is None: self.budget = round_budget(budget)
+        if self.budget is None:
+            self.budget = env.default_budget(budget)
         try:
             question = self.question.instantiate(env.args)
-            answerer = main.Answerer(context=env.context).add_register(Message('Q: ') + question, src=src)
-            answer, result_src, answerer, budget_consumed = answerer.run(self.budget, budget)
+            answerer = env.make_child(question, src=src, budget=self.budget)
+            answer, result_src, answerer, budget_consumed = answerer.run(min(self.budget, budget))
             answer, env = env.contextualize(answer)
-            addressed_question = Message('Q[{}]: '.format(self.budget)) + self.question
+            addressed_question = env.render_question(self.question, budget=self.budget)
             addressed_answer = Message('A: ') + answer
             env = env.add_register(addressed_question, addressed_answer, src=src,
                     result_src=result_src, contextualize=False)
             return None, env, budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
-
-def round_budget(x):
-    if x == float('inf'):
-        return float('inf')
-    if x <= 10:
-        return 10
-    return 10**int(log(x) / log(10))
 
 class View(Command):
 

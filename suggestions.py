@@ -113,10 +113,6 @@ class TranslateSuggester(Suggester):
     def __init__(self):
         super().__init__("translate")
 
-    def default(self, env, obs):
-        return str(messages.strip_prefix(env.registers[-1]['contents'][0]))
-
-
 def init_database():
     with closing(sqlite3.connect("memoize.db")) as conn:
         c = conn.cursor()
