@@ -33,15 +33,15 @@ def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
 
 class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[], shortcuts={}, default=""):
+    def __init__(self, t, x, y, suggestions=[], pre_suggestions=[], shortcuts={}, default=""):
         self.x = x
         self.y = y
         self.s = default
         self.cursor = len(self.s)
         self.high_water = len(self.s)
         self.t = t
-        self.drafts = [None] + suggestions
-        self.current_draft = 0
+        self.drafts = pre_suggestions + [None] + suggestions
+        self.current_draft = len(pre_suggestions)
         self.shortcuts = shortcuts
 
     def move_to_draft(self, new_draft):

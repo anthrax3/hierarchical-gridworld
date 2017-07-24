@@ -101,10 +101,6 @@ class Suggester(object):
         suggestions = best_dict_values(obs, cache)
         return suggestions, shortcuts
 
-    def default(self, env, obs):
-        return ""
-
-
 class ImplementSuggester(Suggester):
     def __init__(self):
         super().__init__("implement")

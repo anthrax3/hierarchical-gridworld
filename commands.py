@@ -2,6 +2,7 @@ import pyparsing as pp
 from utils import unweave
 from messages import Message, Pointer, Channel
 import messages
+import worlds
 import main
 
 class BadCommand(Exception):
@@ -28,8 +29,14 @@ class Ask(Command):
             self.budget = env.default_child_budget()
         try:
             question = self.question.instantiate(env.args)
-            answerer = env.make_child(question, src=src, budget=self.budget)
-            answer, result_src, answerer, budget_consumed = answerer.run(self.budget, budget)
+            builtin_response = builtin_handler(question)
+            if builtin_response is not None:
+                result_src = src
+                budget_consumed = 1
+                answer = builtin_response
+            else:
+                answerer = env.make_child(question, src=src, budget=self.budget)
+                answer, result_src, answerer, budget_consumed = answerer.run(self.budget, budget)
             answer, env = env.contextualize(answer)
             addressed_question = env.render_question(self.question, budget=self.budget)
             addressed_answer = Message('A: ') + answer
@@ -38,6 +45,44 @@ class Ask(Command):
             return None, env, budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
+
+def builtin_handler(Q):
+    if Q.matches("what cell contains the agent in grid []?"):
+        world = messages.get_world(Q.args[0])
+        if world is not None:
+            grid, agent, history = world
+            return Message("the agent is in cell []", messages.CellMessage(agent))
+    if Q.matches("what is in cell [] in grid []?"):
+        cell = messages.get_cell(Q.args[0])
+        world = messages.get_world(Q.args[1])
+        if cell is not None and world is not None:
+            return Message("it contains []", Message(worlds.look(world, cell)))
+    for direction in worlds.directions:
+        if Q.matches("is cell [] {} of cell []?".format(direction)):
+            a = messages.get_cell(Q.args[0])
+            b = messages.get_cell(Q.args[1])
+            if a is not None and b is not None:
+                if (a - b).in_direction(direction):
+                    return Message("yes")
+                else:
+                    return Message("no")
+        if Q.matches("move the agent {} in grid []".format(direction)):
+            world = messages.get_world(Q.args[0])
+            if world is not None:
+                new_world, moved = worlds.move_person(world, direction)
+                if moved:
+                    return Message("the resulting grid is []", messages.WorldMessage(new_world))
+                else:
+                    return Message("it can't move that direction")
+        if Q.matches("what cell is directly {} of cell []?".format(direction)):
+            cell = messages.get_cell(Q.args[0])
+            if cell is not None:
+                new_cell, moved = cell.move(direction)
+                if moved:
+                    return Message("the cell []", messages.CellMessage(new_cell))
+                else:
+                    return Message("there is no cell there")
+    return None
 
 class View(Command):
 

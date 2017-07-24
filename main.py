@@ -3,7 +3,6 @@ from collections import namedtuple
 from messages import Message, Pointer, Channel, Referent, BadInstantiation
 import messages
 import commands
-import worlds
 import term
 import suggestions
 from copy import copy
@@ -70,7 +69,8 @@ ask is cell #n n/e/s/w of cell #m?"""
 
     def run(self, nominal_budget=float('inf'), budget=float('inf')):
         state = self
-        message = None
+        error = None
+        error_replay = None
         budget_consumed = self.initial_budget_consumption
         budget = min(budget, nominal_budget)
         fixed = False 
@@ -81,22 +81,29 @@ ask is cell #n n/e/s/w of cell #m?"""
             return m, src, state, budget_consumed
         while True:
             if budget_consumed >= budget:
-                message = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
-                src = Event(state, message)
-                return ret(Message(message))
-            s = get_response(state, error_message=message, use_cache=state.use_cache, prompt=">> ", kind=state.kind, default=state.get_default())
+                error = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
+                src = Event(state, error)
+                return ret(Message(error))
+            pre_suggestions = state.pre_suggestions()
+            if error_replay is not None: pre_suggestions.append(str(error_replay))
+            s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=">> ",
+                    kind=state.kind, pre_suggestions=pre_suggestions)
             command = commands.parse_command(s)
             if s == "help":
-                message = self.help_message
+                error = state.help_message
+                error_replay = None
             elif command is None:
-                message = "syntax error: {}".format(s)
+                error = "syntax error: {}".format(s)
+                error_replay = s
             elif isinstance(command, commands.Fix):
                 old_src = state.registers[command.n].src
                 state = old_src.context
-                message = "previously: {}".format(old_src.command_str)
+                error_replay = str(old_src.command_str)
+                error = "previously: {}".format(error_replay)
                 fixed = True
             else:
-                message = None
+                error = None
+                error_replay = None
                 src = Event(context=state, command_str=s)
                 try:
                     retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed, src)
@@ -104,7 +111,8 @@ ask is cell #n n/e/s/w of cell #m?"""
                     if retval is not None:
                         return ret(retval)
                 except commands.BadCommand as e:
-                    message = "{}: {}".format(e, s)
+                    error = "{}: {}".format(e, s)
+                    error_replay = s
 
     def dump_and_print(message):
         self.context.terminal.clear()
@@ -201,8 +209,8 @@ ask is cell #n n/e/s/w of cell #m?"""
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
     
-    def get_default(self):
-        return ""
+    def pre_suggestions(self):
+        return []
 
 class Translator(RegisterMachine):
 
@@ -223,53 +231,15 @@ class Translator(RegisterMachine):
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[abstract]: '.format(budget)) + Q
 
-    def get_default(self):
+    def pre_suggestions(self):
         m = self.registers[-1].contents[-1]
         s = str(messages.strip_prefix(m))
         if utils.starts_with("A", m.text[0]):
-            return "A " + s
+            return ["A " + s]
         elif utils.starts_with("Q", m.text[0]):
-            return "Q " + s
+            return ["Q " + s]
         else:
-            return ""
-
-def builtin_handler(Q):
-    if Q.matches("what cell contains the agent in grid []?"):
-        world = messages.get_world(Q.args[0])
-        if world is not None:
-            grid, agent, history = world
-            return Message("the agent is in cell []", messages.CellMessage(agent))
-    if Q.matches("what is in cell [] in grid []?"):
-        cell = messages.get_cell(Q.args[0])
-        world = messages.get_world(Q.args[1])
-        if cell is not None and world is not None:
-            return Message("it contains []", Message(worlds.look(world, cell)))
-    for direction in worlds.directions:
-        if Q.matches("is cell [] {} of cell []?".format(direction)):
-            a = messages.get_cell(Q.args[0])
-            b = messages.get_cell(Q.args[1])
-            if a is not None and b is not None:
-                if (a - b).in_direction(direction):
-                    return Message("yes")
-                else:
-                    return Message("no")
-        if Q.matches("move the agent {} in grid []".format(direction)):
-            world = messages.get_world(Q.args[0])
-            if world is not None:
-                new_world, moved = worlds.move_person(world, direction)
-                if moved:
-                    return Message("the resulting grid is []", messages.WorldMessage(new_world))
-                else:
-                    return Message("it can't move that direction")
-        if Q.matches("what cell is directly {} of cell []?".format(direction)):
-            cell = messages.get_cell(Q.args[0])
-            if cell is not None:
-                new_cell, moved = cell.move(direction)
-                if moved:
-                    return Message("the cell []", messages.CellMessage(new_cell))
-                else:
-                    return Message("there is no cell there")
-    return None
+            return []
 
 class Context(object):
 
@@ -286,7 +256,8 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
-def get_response(env, kind, use_cache=True, replace_old=False, error_message=None, prompt=">>> ", default=None):
+def get_response(env, kind, use_cache=True, replace_old=False, error_message=None,
+        prompt=">>> ", default=None, pre_suggestions=[]):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -301,22 +272,14 @@ def get_response(env, kind, use_cache=True, replace_old=False, error_message=Non
             t.print_line(line)
         if use_cache:
             hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
-            if default is None:
-                default = suggester.default(env, obs)
         else:
             hints, shortcuts = [], []
-            if default is None:
-                default = ""
+        if default is None:
+            default = ""
         if error_message is not None:
             t.print_line(error_message)
             t.print_line("")
-        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default)
+        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default, pre_suggestions=pre_suggestions)
         if use_cache:
             suggester.set_cached_response(obs, response)
     return response
-
-def main():
-    with Context() as context:
-        world = worlds.default_world()
-        init_message = messages.Message("[] is a grid", messages.WorldMessage(world))
-        return RegisterMachine(context=context, use_cache=False).add_register(init_message).run()
