@@ -13,7 +13,7 @@ class BadCommand(Exception):
 
 class Command(object):
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         raise NotImplemented()
 
 class Ask(Command):
@@ -22,20 +22,19 @@ class Ask(Command):
         self.question = question
         self.budget = budget
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         if self.budget is None: self.budget = round_budget(budget)
         try:
             question = self.question.instantiate(env.args)
-            answerer = main.Answerer(context=env.context).add_register((Message('Q: ') + question,))
-            answer, answerer, budget_consumed = answerer.run(self.budget, budget)
+            answerer = main.Answerer(context=env.context).add_register(Message('Q: ') + question, src=src)
+            answer, result_src, answerer, budget_consumed = answerer.run(self.budget, budget)
             answer, env = env.contextualize(answer)
             addressed_question = Message('Q[{}]: '.format(self.budget)) + self.question
             addressed_answer = Message('A: ') + answer
-            env = register_adder(env,
-                    (addressed_question, addressed_answer),
-                    answerer=answerer, contextualize=False)
+            env = env.add_register(addressed_question, addressed_answer, src=src,
+                    result_src=result_src, contextualize=False)
             return None, env, budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
@@ -52,7 +51,7 @@ class View(Command):
     def __init__(self, n):
         self.n = n 
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         n = self.n
         if n < 0 or n >= len(env.args):
             raise BadCommand("invalid index")
@@ -65,11 +64,11 @@ class Say(Command):
     def __init__(self, message):
         self.message = message
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         try:
-            return None, register_adder(env, (message,)), 0
+            return None, env.add_register(message, src=src), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -81,7 +80,7 @@ class Clear(Command):
     def __str__(self):
         return "clear {}".format(self.n)
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         return None, clear(self.n, env), 0
 
 def clear(n, env):
@@ -97,9 +96,9 @@ class Replace(Command):
         self.ns = ns
         self.message = message
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         try:
-            env = register_adder(env, (self.message,))
+            env = env.add_register(self.message, src=src)
             removed = []
             for n in self.ns:
                 removed.append(n)
@@ -109,51 +108,49 @@ class Replace(Command):
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
-#class Replay(Command):
-#
-#    def __str__(self):
-#        return "replay"
-#
-#    def execute(self, env, budget):
-#        last_action = env.actions[-1]
-#        if not isinstance(last_action, Ask):
-#            raise BadCommand("replay can only follow an action")
-#        t = env.context.terminal
-#        t.clear()
-#        for line in env.get_lines():
-#            t.print_line(line)
-#        t.print_line("replay the last line? [type 'y' or 'n']")
-#        t.set_cursor(t.x, t.y)
-#        t.refresh()
-#        while True:
-#            ch, key = t.poll()
-#            if ch == "y":
-#                return None, env.history[-1], 0
-#            if ch == "n":
-#                raise BadCommand("cancelled")
-#
 class Reply(Command):
 
     def __init__(self, message):
         self.message = message
 
-    def execute(self, env, budget, register_adder):
+    def execute(self, env, budget, src):
         try:
             answer = self.message.instantiate(env.args)
             given_answer = Message("A: ") + self.message
-            return answer, register_adder(env, (given_answer,), contextualize=False), 0
+            return answer, env.add_register(given_answer, src=src, contextualize=False), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
+class Raise(Command):
+
+    def __init__(self, n, message):
+        self.n = n
+        self.message = message
+
+    def execute(self, env, budget, src):
+        register = env.registers[self.n]
+        try:
+            message = self.message.instantiate(env.args)
+        except BadInstantiation:
+            raise BadCommand("invalid reference")
+        if register.result_src is not None:
+            old_src = register.result_src
+        else:
+            old_src = register.src
+        error = Message("Error: {}".format(old_src.command_str))
+        state = old_src.context.add_register(error, message, src=old_src, result_src=src)
+        return None, state, 0
+
 class Fix(Command):
 
-    def execute(self, env, budget):
-        return None, env.add_action(self).add_message(Message(self.fix(env))), 0
-    
-    def fix(self, env):
-        change = env.fix()
-        return "response {} changed".format(change) if change is not None else "nothing was changed"
+    def __init__(self, n):
+        self.n = n
 
+    def execute(self, env, budget, src):
+        env = env.registers[self.n].src.context
+        env.clear_response()
+        return None, env, 0
+    
 #----parsing
 
 def parse(t, string):
@@ -214,13 +211,10 @@ budget_modifier.setParseAction(lambda xs : ("budget", xs[0]))
 ask_modifiers = pp.Optional(budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 
-ask_command = (raw("Q")) + ask_modifiers + w + message
+ask_command = (raw("ask")) + ask_modifiers + w + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-fix_command = (raw('fix'))
-fix_command.setParseAction(lambda xs : Fix())
-
-reply_command = (raw("A")) + w + message
+reply_command = (raw("reply")) + w + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
 clear_command = (raw("clear")) + w + number
@@ -235,7 +229,10 @@ say_command.setParseAction(lambda xs : Say(xs[0]))
 view_command = raw("view") + w + number
 view_command.setParseAction(lambda xs : View(xs[0]))
 
-#replay_command = raw("replay")
-#replay_command.setParseAction(lambda xs : Replay())
-#
-command = ask_command | reply_command | say_command | view_command | fix_command | clear_command | replace_command
+raise_command = raw("raise") + w + number + w + message
+raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
+
+fix_command = raw("fix") + w + number
+fix_command.setParseAction(lambda xs : Fix(xs[0]))
+
+command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command
