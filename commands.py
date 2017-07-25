@@ -223,8 +223,10 @@ class Resume(Command):
         budget = min(budget, new_budget)
         if isinstance(new_env, main.Translator):
             if len(new_env.registers) == 1:
-                raise BadCommand("can't resume that")
-            _, new_env, budget_consumed = Resume(1, self.multiplier).execute(new_env, budget, src) #XXX hacky
+                new_env = new_env
+                budget_consumed = 0
+            else:
+                _, new_env, budget_consumed = Resume(1, self.multiplier).execute(new_env, budget, src) #XXX hacky
             result, result_src, new_env, step_budget_consumed = new_env.run(new_budget - budget_consumed, budget - budget_consumed)
             budget_consumed += step_budget_consumed
         else:
