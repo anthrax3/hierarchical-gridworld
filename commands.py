@@ -203,9 +203,10 @@ class Fix(Command):
 
 class Resume(Command):
 
-    def __init__(self, n, multiplier=1):
+    def __init__(self, n, message=None, multiplier=1):
         self.n = n
         self.multiplier = multiplier
+        self.message = message
 
     def execute(self, env, budget, src):
         try:
@@ -217,11 +218,22 @@ class Resume(Command):
             raise BadCommand("can only give more time to not builtin questions")
         new_budget = register.cmd.budget
         question = register.cmd.question.instantiate(env.args)
-        new_budget *= self.multiplier
         new_cmd = Ask(register.cmd.question, new_budget)
         new_env = register.result_src.context
-        new_head = new_env.make_head(question, new_budget).copy(args=new_env.registers[0].contents[0].args)
-        new_env = new_env.add_register(new_head, src=src, parent_src=src, replace=True, n=0, contextualize=False)
+        if (self.message is None) != (register.result_src.interrupted):
+            raise BadCommand("must include follow-up iff question completed successfully")
+        if (self.multiplier != 1) != (register.result_src.exhausted):
+            raise BadCommand("must provide more time iff budget exhausted")
+        if self.multiplier != 1:
+            new_budget *= self.multiplier
+            new_head = new_env.make_head(question, new_budget).copy(args=new_env.registers[0].contents[0].args)
+            new_env = new_env.add_register(new_head, src=src, parent_src=src, replace=True, n=0, contextualize=False)
+        if self.message is not None:
+            reply_cmd = register.result_src.command
+            followup, new_env = new_env.contextualize(self.message)
+            followup = Message("Reply: ") + followup
+            answer = Message("A: ") + reply_cmd.message.instantiate(new_env.args)
+            new_env = new_env.add_register(answer, followup, src=register.result_src, parent_src=src, contextualize=False)
         budget = min(budget, new_budget)
         new_n = len(new_env.registers) - 1
         new_register = new_env.registers[new_n]
@@ -335,10 +347,10 @@ raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
 fix_command = raw("fix") + w + number
 fix_command.setParseAction(lambda xs : Fix(xs[0]))
 
-resume_command = raw("resume") + w + number
-resume_command.setParseAction(lambda xs : Resume(xs[0]))
+resume_command = raw("resume") + w + number + (w ^ w + message)
+resume_command.setParseAction(lambda xs : Resume(*xs))
 
 more_command = raw("more") + w + number
-more_command.setParseAction(lambda xs : Resume(xs[0], 10))
+more_command.setParseAction(lambda xs : Resume(xs[0], multiplier=10))
 
 command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command | more_command | resume_command

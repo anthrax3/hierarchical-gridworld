@@ -33,7 +33,7 @@ class FixedError(Exception):
     pass
 
 class RegisterMachine(object):
-    max_registers = 5
+    max_registers = 6
     initial_budget_consumption = 1
     kind = "implement"
     prompt = ">> "
@@ -238,7 +238,7 @@ ask is cell #n n/e/s/w of cell #m?"""
 class Translator(RegisterMachine):
 
     kind = "translate"
-    max_registers = 2
+    max_registers = 3
     initial_budget_consumption = 0
     prompt = "-> "
 
