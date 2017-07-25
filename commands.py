@@ -37,7 +37,7 @@ class Ask(Command):
             question = self.question.instantiate(env.args)
             builtin_response = builtin_handler(question)
             if builtin_response is not None:
-                result_src = src
+                result_src = None
                 budget_consumed = 1
                 answer = builtin_response
             else:
@@ -115,7 +115,7 @@ class Say(Command):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         try:
-            return None, env.add_register(self.message, cmd=self, src=src), 0
+            return None, env.add_register(self.message, cmd=self, src=src), 1
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -164,6 +164,8 @@ class Reply(Command):
         self.message = message
 
     def execute(self, env, budget, src):
+        if len(env.registers) >= env.max_registers:
+            raise BadCommand("no free registers (use clear or replace instead)")
         try:
             answer = self.message.instantiate(env.args)
             given_answer = Message("A: ") + self.message
@@ -183,14 +185,14 @@ class Raise(Command):
     def execute(self, env, budget, src):
         register = env.registers[self.n]
         try:
-            message = self.message.instantiate(env.args)
-        except BadInstantiation:
+            message = Message("Error: ") + self.message.instantiate(env.args)
+        except messages.BadInstantiation:
             raise BadCommand("invalid reference")
         if register.result_src is not None:
             old_src = register.result_src
         else:
             old_src = register.src
-        error = Message("Error: {}".format(old_src.command_str))
+        error = Message(old_src.command_str)
         state = old_src.context.add_register(error, message, src=old_src, result_src=src, cmd=self)
         return None, state, 0
 
@@ -211,8 +213,8 @@ class Resume(Command):
         except IndexError:
             assert False
             raise BadCommand("invalid index")
-        if not isinstance(register.cmd, Ask) or register.cmd.budget == float("inf"):
-            raise BadCommand("can only give more time to questions with finite budget")
+        if register.result_src is None: #builtin or not a question
+            raise BadCommand("can only give more time to not builtin questions")
         new_budget = register.cmd.budget
         question = register.cmd.question.instantiate(env.args)
         new_budget *= self.multiplier
@@ -221,14 +223,22 @@ class Resume(Command):
         new_head = new_env.make_head(question, new_budget).copy(args=new_env.registers[0].contents[0].args)
         new_env = new_env.add_register(new_head, src=src, parent_src=src, replace=True, n=0, contextualize=False)
         budget = min(budget, new_budget)
-        if isinstance(new_env, main.Translator):
-            if len(new_env.registers) == 1:
-                new_env = new_env
-                budget_consumed = 0
-            else:
-                _, new_env, budget_consumed = Resume(1, self.multiplier).execute(new_env, budget, src) #XXX hacky
+        new_n = len(new_env.registers) - 1
+        new_register = new_env.registers[new_n]
+        if (register.result_src.interrupted
+                and new_register.result_src is not None
+                and new_register.result_src.exhausted == register.result_src.exhausted):
+            _, new_env, budget_consumed = Resume(new_n, multiplier=self.multiplier).execute(new_env, budget, src)
             result, result_src, new_env, step_budget_consumed = new_env.run(new_budget - budget_consumed, budget - budget_consumed)
             budget_consumed += step_budget_consumed
+        #if isinstance(new_env, main.Translator):
+        #    if len(new_env.registers) == 1:
+        #        new_env = new_env
+        #        budget_consumed = 0
+        #    else:
+        #        _, new_env, budget_consumed = Resume(1, multiplier=self.multiplier).execute(new_env, budget, src) #XXX hacky
+        #    result, result_src, new_env, step_budget_consumed = new_env.run(new_budget - budget_consumed, budget - budget_consumed)
+        #    budget_consumed += step_budget_consumed
         else:
             result, result_src, new_env, budget_consumed = new_env.run(new_budget, budget)
         result, env = env.contextualize(result)
@@ -239,11 +249,15 @@ class Resume(Command):
     
 #----parsing
 
+parse_cache = {}
+
 def parse(t, string):
-    try:
-        return t.parseString(string, parseAll=True)[0]
-    except pp.ParseException:
-        return None
+    if (t, string) not in parse_cache:
+        try:
+            parse_cache[(t, string)] = t.parseString(string, parseAll=True)[0]
+        except pp.ParseException:
+            parse_cache[(t, string)] = None
+    return parse_cache[(t, string)]
 
 def parse_reply(s):
     return parse(reply_command, s)
@@ -306,7 +320,7 @@ reply_command.setParseAction(lambda xs : Reply(xs[0]))
 clear_command = (raw("clear")) + w + number
 clear_command.setParseAction(lambda xs : Clear(xs[0]))
 
-replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(w + raw("and")) + w + number) + w + raw("with") + w + message
+replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(w + raw("and")) + w + number) + pp.Optional(w + raw("with")) + w + message
 replace_command.setParseAction(lambda xs : Replace(xs[:-1], xs[-1]))
 
 say_command = (raw("say") | raw("state")) + w + message

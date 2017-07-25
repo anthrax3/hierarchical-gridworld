@@ -41,6 +41,7 @@ class Message(Referent):
     def finalize_args(self, args):
         assert self.pending
         self.args = args
+        self.pending = False
         assert self.well_formed()
 
     def matches(self, text):

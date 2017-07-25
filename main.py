@@ -12,19 +12,22 @@ class Register(object):
     def __init__(self, contents, src=None, result_src=None, parent_src=None, cmd=None):
         self.contents = contents
         self.src = src
-        self.result_src = result_src
         self.cmd = cmd
+        self.result_src = result_src
         self.parent_src = parent_src
 
     def copy(self, **kwargs):
-        for k in ["contents", "src", "result_src", "cmd", "parent_src"]:
+        for k in ["contents", "src", "result_src", "parent_src", "cmd"]:
             if k not in kwargs: kwargs[k] = self.__dict__[k]
         return self.__class__(**kwargs)
 
 class Event(object):
-    def __init__(self, context, command_str):
+    def __init__(self, context, command_str, command=None, interrupted=False, exhausted=False):
         self.context = context
         self.command_str = command_str
+        self.command = command
+        self.interrupted = interrupted
+        self.exhausted = exhausted
 
 class FixedError(Exception):
     pass
@@ -82,14 +85,16 @@ ask is cell #n n/e/s/w of cell #m?"""
                 raise FixedError()
             return m, src, state, budget_consumed
         while True:
-            if budget_consumed >= budget:
+            if budget_consumed >= budget or budget_consumed > 1e5:
                 error = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
-                src = Event(state, error)
+                src = Event(state, error, interrupted=True, exhausted=budget_consumed >= nominal_budget)
                 return ret(Message(error))
-            pre_suggestions = state.pre_suggestions()
-            if error_replay is not None: pre_suggestions.append(str(error_replay))
+            def make_pre_suggestions():
+                pre_suggestions = state.pre_suggestions()
+                if error_replay is not None: pre_suggestions.append(str(error_replay))
+                return pre_suggestions
             s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=state.prompt,
-                    kind=state.kind, pre_suggestions=pre_suggestions)
+                    kind=state.kind, make_pre_suggestions=make_pre_suggestions)
             command = commands.parse_command(s)
             if s == "help":
                 error = state.help_message
@@ -106,7 +111,7 @@ ask is cell #n n/e/s/w of cell #m?"""
             else:
                 error = None
                 error_replay = None
-                src = Event(context=state, command_str=s)
+                src = Event(context=state, command_str=s, command=command)
                 try:
                     retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed, src)
                     budget_consumed += step_budget_consumed
@@ -168,23 +173,30 @@ ask is cell #n n/e/s/w of cell #m?"""
     def delete_arg(self, n, new_m=None, src=None):
         def sub(m):
             if isinstance(m, tuple):
-                return tuple(sub(c) for c in m)
-            if isinstance(m, Register):
-                kwargs = {} if src is None else {"src":src}
-                return m.copy(contents=sub(m.contents), **kwargs)
+                results = [sub(c) for c in m]
+                return tuple(a for a, b in results), any(b for a, b in results)
+            elif isinstance(m, Register):
+                new_contents, changed = sub(m.contents)
+                kwargs = {"src":src} if src is not None and changed else {}
+                return m.copy(contents=new_contents, **kwargs), changed
             elif isinstance(m, Pointer):
                 if m.n < n:
-                    return m
+                    return m, False
                 elif m.n == n:
                     assert new_m is not None
-                    return sub(new_m)
+                    return sub(new_m)[0], True
                 elif m.n > n:
-                    return Pointer(m.n - 1, m.type)
+                    return Pointer(m.n - 1, m.type), False
             elif isinstance(m, Message):
-                return m.transform_args_recursive(sub)
+                def inner_sub(arg):
+                    result, changed = sub(arg)
+                    inner_sub.any_changed = changed or inner_sub.any_changed
+                    return result
+                inner_sub.any_changed = False
+                return m.transform_args_recursive(inner_sub), inner_sub.any_changed
             raise ValueError
         new_args = self.args[:n] + self.args[n+1:]
-        return self.copy(registers=sub(self.registers), args=new_args)
+        return self.copy(registers=sub(self.registers)[0], args=new_args)
 
     def delete_unused_args(self):
         in_use =  {k:False for k in range(len(self.args))}
@@ -259,7 +271,7 @@ class Context(object):
         self.terminal.__exit__(*args)
 
 def get_response(env, kind, use_cache=True, replace_old=False, error_message=None,
-        prompt=">>> ", default=None, pre_suggestions=[]):
+        prompt=">>> ", default=None, make_pre_suggestions=lambda : []):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -281,7 +293,8 @@ def get_response(env, kind, use_cache=True, replace_old=False, error_message=Non
         if error_message is not None:
             t.print_line(error_message)
             t.print_line("")
-        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt, default=default, pre_suggestions=pre_suggestions)
+        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt,
+                default=default, pre_suggestions=make_pre_suggestions())
         if use_cache:
             suggester.set_cached_response(obs, response)
     return response

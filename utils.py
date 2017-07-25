@@ -3,16 +3,16 @@ def areinstances(xs, t):
 
 def interleave(*xss):
     result = []
-    xss = [list(xs) for xs in xss]
     indices = [0 for xs in xss]
+    lens = [len(xs) for xs in xss]
     n = 0
     while True:
-        if indices[n] >= len(xss[n]):
+        if indices[n] >= lens[n]:
             break
         result.append(xss[n][indices[n]])
         indices[n] += 1
         n = (n + 1) % (len(xss))
-    assert all(i == len(xs) for i, xs in zip(indices, xss))
+    assert indices == lens
     return result
 
 def unweave(xs):
