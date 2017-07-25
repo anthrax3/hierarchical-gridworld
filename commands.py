@@ -209,6 +209,7 @@ class Resume(Command):
         try:
             register = env.registers[self.n]
         except IndexError:
+            assert False
             raise BadCommand("invalid index")
         if not isinstance(register.cmd, Ask) or register.cmd.budget == float("inf"):
             raise BadCommand("can only give more time to questions with finite budget")
@@ -221,6 +222,8 @@ class Resume(Command):
         new_env = new_env.add_register(new_head, src=src, replace=True, n=0, contextualize=False)
         budget = min(budget, new_budget)
         if isinstance(new_env, main.Translator):
+            if len(new_env.registers) == 1:
+                raise BadCommand("can't resume that")
             _, new_env, budget_consumed = Resume(1, self.multiplier).execute(new_env, budget, src) #XXX hacky
             result, result_src, new_env, step_budget_consumed = new_env.run(new_budget - budget_consumed, budget - budget_consumed)
             budget_consumed += step_budget_consumed

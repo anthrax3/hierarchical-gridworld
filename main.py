@@ -32,6 +32,7 @@ class RegisterMachine(object):
     max_registers = 5
     initial_budget_consumption = 1
     kind = "implement"
+    prompt = ">> "
     help_message = """Valid commands:
 
 "ask <question>", e.g. "ask what is one plus one?"
@@ -86,7 +87,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                 return ret(Message(error))
             pre_suggestions = state.pre_suggestions()
             if error_replay is not None: pre_suggestions.append(str(error_replay))
-            s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=">> ",
+            s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=state.prompt,
                     kind=state.kind, pre_suggestions=pre_suggestions)
             command = commands.parse_command(s)
             if s == "help":
@@ -208,15 +209,24 @@ ask is cell #n n/e/s/w of cell #m?"""
 
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
-    
-    def pre_suggestions(self):
-        return []
 
+    def pre_suggestions(self):
+        result = []
+        for register in self.registers:
+            for m in register.contents:
+                s = str(messages.strip_prefix(m))
+                if utils.starts_with("A", m.text[0]):
+                    result.append("A: " + s)
+                elif utils.starts_with("Q", m.text[0]):
+                    result.append("Q: " + s)
+        return result
+    
 class Translator(RegisterMachine):
 
     kind = "translate"
-    max_registers = 3
+    max_registers = 2
     initial_budget_consumption = 0
+    prompt = "-> "
 
     def make_child(self, Q, budget=float('inf'), src=None):
         env = RegisterMachine(context=self.context, budget=budget)
@@ -230,16 +240,6 @@ class Translator(RegisterMachine):
 
     def render_question(self, Q, budget=float('inf')):
         return Message('Q[abstract]: '.format(budget)) + Q
-
-    def pre_suggestions(self):
-        m = self.registers[-1].contents[-1]
-        s = str(messages.strip_prefix(m))
-        if utils.starts_with("A", m.text[0]):
-            return ["A: " + s]
-        elif utils.starts_with("Q", m.text[0]):
-            return ["Q: " + s]
-        else:
-            return []
 
 class Context(object):
 
