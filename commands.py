@@ -16,11 +16,17 @@ class Command(object):
     def execute(self, env, budget, src):
         raise NotImplemented()
 
+    def messages(self):
+        return []
+
 class Ask(Command):
 
     def __init__(self, question, budget=None):
         self.question = question
         self.budget = budget
+
+    def messages(self):
+        return [self.question]
 
     def execute(self, env, budget, src):
         if len(env.registers) >= env.max_registers:
@@ -102,12 +108,14 @@ class Say(Command):
     def __init__(self, message):
         self.message = message
 
+    def messages(self):
+        return [self.message]
+
     def execute(self, env, budget, src):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         try:
-            message = self.message.instantiate(env.args)
-            return None, env.add_register(message, cmd=self, src=src), 0
+            return None, env.add_register(self.message, cmd=self, src=src), 0
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -134,6 +142,9 @@ class Replace(Command):
     def __init__(self, ns, message):
         self.ns = ns
         self.message = message
+
+    def messages(self):
+        return [self.message]
 
     def execute(self, env, budget, src):
         try:
@@ -166,6 +177,9 @@ class Raise(Command):
         self.n = n
         self.message = message
 
+    def messages(self):
+        return [self.message]
+
     def execute(self, env, budget, src):
         register = env.registers[self.n]
         try:
@@ -192,7 +206,10 @@ class Resume(Command):
         self.multiplier = multiplier
 
     def execute(self, env, budget, src):
-        register = env.registers[self.n]
+        try:
+            register = env.registers[self.n]
+        except IndexError:
+            raise BadCommand("invalid index")
         if not isinstance(register.cmd, Ask) or register.cmd.budget == float("inf"):
             raise BadCommand("can only give more time to questions with finite budget")
         new_budget = register.cmd.budget
@@ -275,19 +292,19 @@ budget_modifier.setParseAction(lambda xs : ("budget", xs[0]))
 ask_modifiers = pp.Optional(budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 
-ask_command = (raw("ask") | raw("Q")) + ask_modifiers + w + message
+ask_command = (raw("ask") | raw("Q:") | raw("Q")) + ask_modifiers + w + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply") | raw("A")) + w + message
+reply_command = (raw("reply") | raw("A:") | raw("A")) + w + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
 clear_command = (raw("clear")) + w + number
 clear_command.setParseAction(lambda xs : Clear(xs[0]))
 
-replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(w + raw("and") + w + number) + w + raw("with") + w + message
+replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(w + raw("and")) + w + number) + w + raw("with") + w + message
 replace_command.setParseAction(lambda xs : Replace(xs[:-1], xs[-1]))
 
-say_command = (raw("say")) + w + message
+say_command = (raw("say") | raw("state")) + w + message
 say_command.setParseAction(lambda xs : Say(xs[0]))
 
 view_command = raw("view") + w + number

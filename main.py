@@ -76,7 +76,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         fixed = False 
         src = None
         def ret(m):
-            if fixed: #TODO recover from fixing
+            if fixed and self.registers[0].src != state.registers[0].src:
                 raise FixedError()
             return m, src, state, budget_consumed
         while True:
@@ -235,9 +235,9 @@ class Translator(RegisterMachine):
         m = self.registers[-1].contents[-1]
         s = str(messages.strip_prefix(m))
         if utils.starts_with("A", m.text[0]):
-            return ["A " + s]
+            return ["A: " + s]
         elif utils.starts_with("Q", m.text[0]):
-            return ["Q " + s]
+            return ["Q: " + s]
         else:
             return []
 

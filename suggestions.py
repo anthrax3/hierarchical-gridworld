@@ -57,48 +57,39 @@ class Suggester(object):
     def make_suggestions_and_shortcuts(self, env, obs, num_suggestions=5, num_shortcuts=5):
         cache = self.cache
         shortcuts = []
-        #def add_shortcut(m):
-        #    h = m.format(["()"] * m.size)
-        #    if useful_shortcut(h) and len(shortcuts) < num_shortcuts and h not in shortcuts:
-        #        shortcuts.append(h)
-        #def useful_shortcut(h):
-        #    return len(h) > 8
-        #for m in env.messages:
-        #    for h in messages.submessages(messages.strip_prefix(m), include_root=True):
-        #        add_shortcut(h)
-        #for c in env.actions:
-        #    for m in [c] if isinstance(c, messages.Message) else c.messages():
-        #        for h in messages.submessages(m, include_root=True):
-        #            add_shortcut(h)
-        #def useful_suggestion(h):
-        #    c = commands.parse_command(h)
-        #    m = commands.parse_message(h)
-        #    if c is not None:
-        #        for m in c.messages():
-        #            try:
-        #                m.instantiate(env.args)
-        #            except messages.BadInstantiation:
-        #                return False
-        #        return True
-        #    elif m is not None:
-        #        try:
-        #            m.instantiate(env.args)
-        #            return True
-        #        except messages.BadInstantiation:
-        #            return False
-        #    return False
-        #suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
-        #for h in suggestions:
-        #    c = commands.parse_command(h)
-        #    m = commands.parse_message(h)
-        #    if c is not None:
-        #        for m in c.messages():
-        #            for sub_m in messages.submessages(m, include_root=True):
-        #                add_shortcut(sub_m)
-        #    elif m is not None:
-        #        for sub_m in messages.submessages(m, include_root=True):
-        #            add_shortcut(sub_m)
-        suggestions = best_dict_values(obs, cache)
+        def add_shortcut(m):
+            h = m.format(["()"] * m.size)
+            if useful_shortcut(h) and len(shortcuts) < num_shortcuts and h not in shortcuts:
+                shortcuts.append(h)
+        def useful_shortcut(h):
+            return len(h) > 8
+        for register in env.registers:
+            for m in register.contents:
+                for h in messages.submessages(messages.strip_prefix(m), include_root=True):
+                    add_shortcut(h)
+        def useful_suggestion(h):
+            c = commands.parse_command(h)
+            m = commands.parse_message(h)
+            try:
+                if c is not None:
+                    for m in c.messages():
+                        m.instantiate(env.args)
+                elif m is not None:
+                    m.instantiate(env.args)
+                return True
+            except messages.BadInstantiation:
+                return False
+        suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
+        for h in suggestions:
+            c = commands.parse_command(h)
+            m = commands.parse_message(h)
+            if c is not None:
+                for m in c.messages():
+                    for sub_m in messages.submessages(m, include_root=True):
+                        add_shortcut(sub_m)
+            elif m is not None:
+                for sub_m in messages.submessages(m, include_root=True):
+                    add_shortcut(sub_m)
         return suggestions, shortcuts
 
 class ImplementSuggester(Suggester):

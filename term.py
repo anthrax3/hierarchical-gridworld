@@ -42,11 +42,13 @@ class Input(object):
         self.t = t
         self.drafts = pre_suggestions + [None] + suggestions
         self.current_draft = len(pre_suggestions)
+        self.initial_draft = len(pre_suggestions)
         self.shortcuts = shortcuts
 
     def move_to_draft(self, new_draft):
         cursor_to_end = len(self.s) - self.cursor
-        self.drafts[self.current_draft] = self.s
+        if self.current_draft == self.initial_draft:
+            self.drafts[self.current_draft] = self.s
         self.s = self.drafts[new_draft]
         self.current_draft = new_draft
         self.cursor = max(0, len(self.s) - cursor_to_end)
@@ -103,6 +105,9 @@ class Input(object):
                 self.cursor += self.t.width
             elif self.current_draft < len(self.drafts) - 1:
                 self.move_to_draft(self.current_draft+1)
+        elif key == termbox.KEY_CTRL_U:
+            self.s = ""
+            self.cursor = 0
         elif key == termbox.KEY_CTRL_R:
             self.jump_to_paren(-1)
         elif key == termbox.KEY_CTRL_K:
