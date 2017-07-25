@@ -239,6 +239,7 @@ class Resume(Command):
         new_register = new_env.registers[new_n]
         if (register.result_src.interrupted
                 and new_register.result_src is not None
+                and new_register.result_src.interrupted
                 and new_register.result_src.exhausted == register.result_src.exhausted):
             _, new_env, budget_consumed = Resume(new_n, multiplier=self.multiplier).execute(new_env, budget, src)
             result, result_src, new_env, step_budget_consumed = new_env.run(new_budget - budget_consumed, budget - budget_consumed)

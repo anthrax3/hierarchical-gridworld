@@ -79,6 +79,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         budget_consumed = self.initial_budget_consumption
         budget = min(budget, nominal_budget)
         fixed = False 
+        fixing_state = fixing_s = None
         src = None
         def ret(m):
             if fixed and self.registers[0].parent_src != state.registers[0].parent_src:
@@ -96,7 +97,12 @@ ask is cell #n n/e/s/w of cell #m?"""
             s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=state.prompt,
                     kind=state.kind, make_pre_suggestions=make_pre_suggestions)
             command = commands.parse_command(s)
-            if s == "help":
+            if fixing_state is not None and s == error_replay:
+                error = "nothing was fixed: {}".format(fixing_s)
+                error_replay = fixing_s
+                state = fixing_state
+                fixing_state = fixing_s = None
+            elif s == "help":
                 error = state.help_message
                 error_replay = None
             elif command is None:
@@ -104,6 +110,8 @@ ask is cell #n n/e/s/w of cell #m?"""
                 error_replay = s
             elif isinstance(command, commands.Fix):
                 old_src = state.registers[command.n].src
+                fixing_state = state
+                fixing_s = s
                 state = old_src.context
                 error_replay = str(old_src.command_str)
                 error = "previously: {}".format(error_replay)
@@ -113,6 +121,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                 error_replay = None
                 src = Event(context=state, command_str=s, command=command)
                 try:
+                    fixing_state = fixing_s = None
                     retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed, src)
                     budget_consumed += step_budget_consumed
                     if retval is not None:
