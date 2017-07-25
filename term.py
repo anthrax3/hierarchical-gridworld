@@ -109,9 +109,9 @@ class Input(object):
             self.s = ""
             self.cursor = 0
         elif key == termbox.KEY_CTRL_R:
-            self.jump_to_paren(-1)
+            self.jump_to_arg(-1)
         elif key == termbox.KEY_CTRL_K:
-            self.jump_to_paren(1)
+            self.jump_to_arg(1)
         elif key == termbox.KEY_ENTER:
             return self.s
         elif key in self.shortcuts:
@@ -122,12 +122,17 @@ class Input(object):
         self.refresh()
         return None
 
-    def jump_to_paren(self, d):
+    def jump_to_arg(self, d):
         def to():
             return self.cursor + d
+        stops = "()#"
+        ready = False
         while to() <= len(self.s) and to() >= 0:
+            if self.cursor > 0 and self.s[self.cursor - 1] == " ": ready =True
             self.cursor = to()
-            if self.cursor == 0 or self.s[self.cursor-1] == ")":
+            if self.cursor == 0:
+                return
+            if self.s[self.cursor - 1] in stops and ready:
                 return
 
     def elicit(self):
