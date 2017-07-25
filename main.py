@@ -9,14 +9,15 @@ from copy import copy
 from math import log
 
 class Register(object):
-    def __init__(self, contents, src=None, result_src=None, cmd=None):
+    def __init__(self, contents, src=None, result_src=None, parent_src=None, cmd=None):
         self.contents = contents
         self.src = src
         self.result_src = result_src
         self.cmd = cmd
+        self.parent_src = parent_src
 
     def copy(self, **kwargs):
-        for k in ["contents", "src", "result_src", "cmd"]:
+        for k in ["contents", "src", "result_src", "cmd", "parent_src"]:
             if k not in kwargs: kwargs[k] = self.__dict__[k]
         return self.__class__(**kwargs)
 
@@ -77,7 +78,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         fixed = False 
         src = None
         def ret(m):
-            if fixed and self.registers[0].src != state.registers[0].src:
+            if fixed and self.registers[0].parent_src != state.registers[0].parent_src:
                 raise FixedError()
             return m, src, state, budget_consumed
         while True:
@@ -164,12 +165,13 @@ ask is cell #n n/e/s/w of cell #m?"""
             result.append("")
         return result
 
-    def delete_arg(self, n, new_m=None):
+    def delete_arg(self, n, new_m=None, src=None):
         def sub(m):
             if isinstance(m, tuple):
                 return tuple(sub(c) for c in m)
             if isinstance(m, Register):
-                return m.copy(contents=sub(m.contents))
+                kwargs = {} if src is None else {"src":src}
+                return m.copy(contents=sub(m.contents), **kwargs)
             elif isinstance(m, Pointer):
                 if m.n < n:
                     return m
@@ -198,7 +200,7 @@ ask is cell #n n/e/s/w of cell #m?"""
 
     def make_child(self, Q, budget=float('inf'), src=None):
         env = Translator(context=self.context, budget=budget)
-        return env.add_register(env.make_head(Q, budget), src=src)
+        return env.add_register(env.make_head(Q, budget), src=src, parent_src=src)
 
     def make_head(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
@@ -230,7 +232,7 @@ class Translator(RegisterMachine):
 
     def make_child(self, Q, budget=float('inf'), src=None):
         env = RegisterMachine(context=self.context, budget=budget)
-        return env.add_register(env.make_head(Q, budget), src=src)
+        return env.add_register(env.make_head(Q, budget), src=src, parent_src=src)
 
     def default_child_budget(self):
         return self.budget

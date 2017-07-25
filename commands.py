@@ -100,7 +100,7 @@ class View(Command):
         if n < 0 or n >= len(env.args):
             raise BadCommand("invalid index")
         new_m, env = env.contextualize(env.args[n])
-        env = env.delete_arg(n, new_m)
+        env = env.delete_arg(n, new_m, src=src)
         return None, env, 0
 
 class Say(Command):
@@ -219,7 +219,7 @@ class Resume(Command):
         new_cmd = Ask(register.cmd.question, new_budget)
         new_env = register.result_src.context
         new_head = new_env.make_head(question, new_budget).copy(args=new_env.registers[0].contents[0].args)
-        new_env = new_env.add_register(new_head, src=src, replace=True, n=0, contextualize=False)
+        new_env = new_env.add_register(new_head, src=src, parent_src=src, replace=True, n=0, contextualize=False)
         budget = min(budget, new_budget)
         if isinstance(new_env, main.Translator):
             if len(new_env.registers) == 1:
