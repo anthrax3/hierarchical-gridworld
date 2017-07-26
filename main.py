@@ -81,6 +81,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         fixed = False 
         fixing_state = fixing_s = None
         src = None
+        s = ""
         def ret(m):
             if fixed and self.registers[0].parent_src != state.registers[0].parent_src:
                 raise FixedError()
@@ -88,7 +89,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         while True:
             if budget_consumed >= budget or budget_consumed > 1e5:
                 error = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
-                src = Event(state, error, interrupted=True, exhausted=budget_consumed >= nominal_budget)
+                src = Event(state, s, cmd=command, interrupted=True, exhausted=budget_consumed >= nominal_budget)
                 return ret(Message(error))
             def make_pre_suggestions():
                 pre_suggestions = state.pre_suggestions()

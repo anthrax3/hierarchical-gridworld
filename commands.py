@@ -154,7 +154,7 @@ class Replace(Command):
                 removed.append(n)
                 n -= len([m for m in removed if m < n])
                 env = clear(n, env)
-            return None, env, 0
+            return None, env, 1
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
@@ -218,7 +218,6 @@ class Resume(Command):
             raise BadCommand("can only give more time to not builtin questions")
         new_budget = register.cmd.budget
         question = register.cmd.question.instantiate(env.args)
-        new_cmd = Ask(register.cmd.question, new_budget)
         new_env = register.result_src.context
         if (self.message is None) != (register.result_src.interrupted):
             raise BadCommand("must include follow-up iff question completed successfully")
@@ -228,6 +227,7 @@ class Resume(Command):
             new_budget *= self.multiplier
             new_head = new_env.make_head(question, new_budget).copy(args=new_env.registers[0].contents[0].args)
             new_env = new_env.add_register(new_head, src=src, parent_src=src, replace=True, n=0, contextualize=False)
+        new_cmd = Ask(register.cmd.question, new_budget)
         if self.message is not None:
             reply_cmd = register.result_src.command
             followup, new_env = new_env.contextualize(self.message)
@@ -235,7 +235,10 @@ class Resume(Command):
             answer = Message("A: ") + reply_cmd.message.instantiate(new_env.args)
             new_env = new_env.add_register(answer, followup, src=register.result_src, parent_src=src, contextualize=False)
         budget = min(budget, new_budget)
-        new_n = len(new_env.registers) - 1
+        if isinstance(register.result_src.command, Resume):
+            new_n = register.result_src.command.n
+        else:
+            new_n = len(new_env.registers) - 1
         new_register = new_env.registers[new_n]
         if (register.result_src.interrupted
                 and new_register.result_src is not None
