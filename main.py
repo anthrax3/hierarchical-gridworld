@@ -9,25 +9,14 @@ from copy import copy
 from math import log
 
 class Register(object):
-    def __init__(self, contents, src=None, result_src=None, parent_src=None, cmd=None):
+    def __init__(self, contents, cmd=None):
         self.contents = contents
-        self.src = src
         self.cmd = cmd
-        self.result_src = result_src
-        self.parent_src = parent_src
 
     def copy(self, **kwargs):
-        for k in ["contents", "src", "result_src", "parent_src", "cmd"]:
+        for k in ["contents", "cmd"]:
             if k not in kwargs: kwargs[k] = self.__dict__[k]
         return self.__class__(**kwargs)
-
-class Event(object):
-    def __init__(self, context, command_str, command=None, interrupted=False, exhausted=False):
-        self.context = context
-        self.command_str = command_str
-        self.command = command
-        self.interrupted = interrupted
-        self.exhausted = exhausted
 
 class FixedError(Exception):
     pass
@@ -80,56 +69,53 @@ ask is cell #n n/e/s/w of cell #m?"""
         budget = min(budget, nominal_budget)
         fixed = False 
         fixing_state = fixing_s = None
-        src = None
-        s = ""
+        command = None
         def ret(m):
-            if fixed and self.registers[0].parent_src != state.registers[0].parent_src:
+            if fixed and self.parent_cmd != state.parent_cmd:
                 raise FixedError()
-            return m, src, state, budget_consumed
+            return m, command, budget_consumed
         while True:
             if budget_consumed >= budget or budget_consumed > 1e5:
-                error = "<<budget exhausted>>" if budget_consumed >= nominal_budget else "<<interrupted>>"
-                src = Event(state, s, cmd=command, interrupted=True, exhausted=budget_consumed >= nominal_budget)
-                return ret(Message(error))
+                exhausted = budget_consumed >= nominal_budget
+                command = commands.Interrupted(exhausted, command).set_context(state=state)
+                return ret(command.make_message())
             def make_pre_suggestions():
                 pre_suggestions = state.pre_suggestions()
                 if error_replay is not None: pre_suggestions.append(str(error_replay))
                 return pre_suggestions
             s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=state.prompt,
                     kind=state.kind, make_pre_suggestions=make_pre_suggestions)
-            command = commands.parse_command(s)
+            command = commands.parse_command(s).set_context(string=s, state=state)
             if fixing_state is not None and s == error_replay:
-                error = "nothing was fixed: {}".format(fixing_s)
-                error_replay = fixing_s
+                error = "nothing was fixed"
+                error_cmd = command
                 state = fixing_state
                 fixing_state = fixing_s = None
             elif s == "help":
                 error = state.help_message
-                error_replay = None
-            elif command is None:
+                error_cmd = None
+            elif isinstance(command, commands.Malformed):
                 error = "syntax error: {}".format(s)
-                error_replay = s
+                error_cmd = command
             elif isinstance(command, commands.Fix):
-                old_src = state.registers[command.n].src
+                error_cmd = state.registers[command.n].cmd.command_for_fix()
+                error = "previously"
+                state = error_cmd.state
                 fixing_state = state
                 fixing_s = s
-                state = old_src.context
-                error_replay = str(old_src.command_str)
-                error = "previously: {}".format(error_replay)
                 fixed = True
             else:
-                error = None
-                error_replay = None
-                src = Event(context=state, command_str=s, command=command)
                 try:
                     fixing_state = fixing_s = None
-                    retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed, src)
+                    retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed)
                     budget_consumed += step_budget_consumed
                     if retval is not None:
                         return ret(retval)
+                    error = None
+                    error_cmd = None
                 except commands.BadCommand as e:
-                    error = "{}: {}".format(e, s)
-                    error_replay = s
+                    error = str(e)
+                    error_cmd = command
 
     def dump_and_print(message):
         self.context.terminal.clear()
@@ -180,14 +166,14 @@ ask is cell #n n/e/s/w of cell #m?"""
             result.append("")
         return result
 
-    def delete_arg(self, n, new_m=None, src=None):
+    def delete_arg(self, n, new_m=None, cmd=None):
         def sub(m):
             if isinstance(m, tuple):
                 results = [sub(c) for c in m]
                 return tuple(a for a, b in results), any(b for a, b in results)
             elif isinstance(m, Register):
                 new_contents, changed = sub(m.contents)
-                kwargs = {"src":src} if src is not None and changed else {}
+                kwargs = {"cmd":cmd} if cmd is not None and changed else {}
                 return m.copy(contents=new_contents, **kwargs), changed
             elif isinstance(m, Pointer):
                 if m.n < n:
@@ -220,9 +206,9 @@ ask is cell #n n/e/s/w of cell #m?"""
                 result = result.delete_arg(k)
         return result
 
-    def make_child(self, Q, budget=float('inf'), src=None):
-        env = Translator(context=self.context, budget=budget)
-        return env.add_register(env.make_head(Q, budget), src=src, parent_src=src)
+    def make_child(self, Q, budget=float('inf'), cmd=None):
+        env = Translator(context=self.context, budget=budget, parent_cmd=cmd)
+        return env.add_register(env.make_head(Q, budget), cmd=cmd)
 
     def make_head(self, Q, budget=float('inf')):
         return Message('Q[{}]: '.format(budget)) + Q
@@ -252,9 +238,9 @@ class Translator(RegisterMachine):
     initial_budget_consumption = 0
     prompt = "-> "
 
-    def make_child(self, Q, budget=float('inf'), src=None):
-        env = RegisterMachine(context=self.context, budget=budget)
-        return env.add_register(env.make_head(Q, budget), src=src, parent_src=src)
+    def make_child(self, Q, budget=float('inf'), cmd=None):
+        env = RegisterMachine(context=self.context, budget=budget, parent_cmd=cmd)
+        return env.add_register(env.make_head(Q, budget), cmd=cmd)
 
     def default_child_budget(self):
         return self.budget

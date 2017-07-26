@@ -9,7 +9,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        message, src, environment, budget_consumed = main()
+        message, src, budget_consumed = main()
         import IPython
         from worlds import display_history
         IPython.embed()

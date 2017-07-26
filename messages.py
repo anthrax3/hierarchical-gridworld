@@ -2,12 +2,6 @@ from utils import areinstances, interleave, unweave
 import six
 
 class Referent(object):
-    """
-    A Referent is anything that can be referred to in a message,
-    including Messages, Pointers, and Channels
-    """
-
-    symbol = "?"
 
     def instantiate(self, xs):
         raise NotImplemented()
@@ -19,8 +13,6 @@ class Message(Referent):
     """
     A Message consists of text interspersed with Referents
     """
-
-    symbol = "#"
 
     def __init__(self, text, args=(), pending=False):
         if isinstance(text, six.string_types):
@@ -67,12 +59,11 @@ class Message(Referent):
         return "".join(interleave(self.text, names))
 
     def format_with_indices(self, indices):
-        return self.format(["{}{}".format(arg.symbol, index) for arg, index in zip(self.args, indices)])
+        return self.format(["#{}".format(index) for index in indices])
 
     def __str__(self):
         def f(arg):
-            s = "({})" if arg.symbol == "#" else "{}"
-            return s.format(arg)
+            return "({})".format(arg) if isinstance(arg, Message) else str(arg)
         return self.format([f(arg) for arg in self.args])
 
     def instantiate(self, xs):
@@ -137,23 +128,6 @@ def get_cell(m):
         return get_cell(m.args[0])
     return None
 
-class Channel(Referent):
-    """
-    A Channel is a wrapper around an Env, that lets it be pointed to in messages
-    """
-
-    symbol = "@"
-
-    def __init__(self, implementer, translator):
-        self.implementer = implementer
-        self.translator = translator
-
-    def well_formed(self):
-        return True
-
-    def instantiate(self, xs):
-        raise Exception("should not try to instantiate a channel")
-
 def addressed_message(message, implementer, translator, question=False, budget=float('inf')):
     budget_str = "" if budget == float('inf') else ", budget {}".format(budget)
     channel = Channel(implementer=implementer, translator=translator)
@@ -185,19 +159,15 @@ def submessages(ref, include_root=True, seen=None):
 
 class Pointer(Referent):
     """
-    A Pointer is an abstract variable,
-    which can be instantiated given a list of arguments
+    A Pointer is an integer, that indexes into a list of arguments
     """
 
-    def __init__(self, n, type=Referent):
+    def __init__(self, n):
         self.n = n
-        self.type = type
         assert self.well_formed()
 
     def well_formed(self):
         return (
-            issubclass(self.type, Referent) and
-            self.type != self.__class__ and
             isinstance(self.n, int)
         )
 
@@ -208,9 +178,5 @@ class Pointer(Referent):
         if not isinstance(x, self.type): raise BadInstantiation()
         return x
 
-    @property
-    def symbol(self):
-        return "{}->".format(self.type.symbol)
-
     def __str__(self):
-        return "{}{}".format(self.type.symbol, self.n)
+        return "#{}".format(self.n)
