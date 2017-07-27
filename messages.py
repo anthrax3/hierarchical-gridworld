@@ -157,6 +157,20 @@ def submessages(ref, include_root=True, seen=None):
         for arg in ref.args:
             yield from submessages(arg, seen=seen)
 
+class RegisterReference(Referent):
+    """
+    A reference to a register, that will shift as registers are added or deleted
+    """
+
+    def __init__(self, n):
+        self.n = n
+
+    def __str__(self):
+        return "@{}".format("?" if self.n is None else self.n)
+
+    def instantiate(self, xs):
+        return self
+
 class Pointer(Referent):
     """
     A Pointer is an integer, that indexes into a list of arguments
@@ -172,11 +186,11 @@ class Pointer(Referent):
         )
 
     def instantiate(self, xs):
-        if self.n >= len(xs) or self.n < 0:
+        if self.n < 0: raise BadInstantiation()
+        try:
+            return xs[self.n]
+        except IndexError:
             raise BadInstantiation()
-        x = xs[self.n]
-        if not isinstance(x, self.type): raise BadInstantiation()
-        return x
 
     def __str__(self):
         return "#{}".format(self.n)

@@ -1,6 +1,6 @@
 import utils
 from collections import namedtuple
-from messages import Message, Pointer, Channel, Referent, BadInstantiation
+from messages import Message, Pointer, RegisterReference
 import messages
 import commands
 import term
@@ -17,6 +17,9 @@ class Register(object):
         for k in ["contents", "cmd"]:
             if k not in kwargs: kwargs[k] = self.__dict__[k]
         return self.__class__(**kwargs)
+
+    def transform_contents(self, f):
+        return self.copy(contents=tuple(f(x) for x in self.contents))
 
 class FixedError(Exception):
     pass
@@ -49,27 +52,31 @@ ask move the agent n/e/s/w in grid #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
-    def __init__(self, registers=(), args=(), context=None, use_cache=True, budget=float('inf')):
+    def __init__(self, registers=(), args=(), context=None, use_cache=True, nominal_budget=float('inf'), parent_cmd=None):
         self.registers = registers
         self.args = args
         self.context = context
         self.use_cache = use_cache
-        self.budget = budget
+        self.parent_cmd = parent_cmd
+        self.nominal_budget = nominal_budget
 
     def copy(self, **kwargs):
-        for s in ["registers", "context", "args", "use_cache", "budget"]:
+        for s in ["registers", "context", "args", "use_cache", "nominal_budget", "parent_cmd"]:
             if s not in kwargs: kwargs[s] = self.__dict__[s]
         return self.__class__(**kwargs)
 
-    def run(self, nominal_budget=float('inf'), budget=float('inf')):
+    def __str__(self):
+        return '\n'.join(self.lines)
+
+    def run(self, nominal_budget=float('inf'), budget=float('inf'), previous_cmd=None):
         state = self
         error = None
-        error_replay = None
+        error_cmd = None
         budget_consumed = self.initial_budget_consumption
         budget = min(budget, nominal_budget)
         fixed = False 
-        fixing_state = fixing_s = None
-        command = None
+        fixing_cmd = None
+        command = self.parent_cmd if previous_cmd is None else previous_cmd
         def ret(m):
             if fixed and self.parent_cmd != state.parent_cmd:
                 raise FixedError()
@@ -77,38 +84,46 @@ ask is cell #n n/e/s/w of cell #m?"""
         while True:
             if budget_consumed >= budget or budget_consumed > 1e5:
                 exhausted = budget_consumed >= nominal_budget
-                command = commands.Interrupted(exhausted, command).set_context(state=state)
+                command = commands.Interrupted(exhausted, command, budget_consumed=budget_consumed, state=state)
                 return ret(command.make_message())
             def make_pre_suggestions():
                 pre_suggestions = state.pre_suggestions()
-                if error_replay is not None: pre_suggestions.append(str(error_replay))
+                if error_cmd is not None: pre_suggestions.append(error_cmd.string)
                 return pre_suggestions
-            s = get_response(state, error_message=error, use_cache=state.use_cache, prompt=state.prompt,
+            if error is None:
+                error_message = None
+            else:
+                if error_cmd is None:
+                    error_message = error
+                else:
+                    error_message = "{}: {}".format(error, error_cmd.string)
+            s = get_response(state, error_message=error_message,
+                    use_cache=state.use_cache, prompt=state.prompt,
                     kind=state.kind, make_pre_suggestions=make_pre_suggestions)
-            command = commands.parse_command(s).set_context(string=s, state=state)
-            if fixing_state is not None and s == error_replay:
+            command = commands.parse_command(s)
+            command = command.copy(string=s, state=state)
+            if fixing_cmd is not None and s == error_cmd.string:
                 error = "nothing was fixed"
-                error_cmd = command
-                state = fixing_state
-                fixing_state = fixing_s = None
+                error_cmd = fixing_cmd
+                state = fixing_cmd.state
+                fixing_cmd = None
             elif s == "help":
                 error = state.help_message
                 error_cmd = None
             elif isinstance(command, commands.Malformed):
-                error = "syntax error: {}".format(s)
+                error = "syntax error"
                 error_cmd = command
             elif isinstance(command, commands.Fix):
                 error_cmd = state.registers[command.n].cmd.command_for_fix()
                 error = "previously"
+                fixing_cmd = command
                 state = error_cmd.state
-                fixing_state = state
-                fixing_s = s
                 fixed = True
             else:
                 try:
-                    fixing_state = fixing_s = None
-                    retval, state, step_budget_consumed = command.execute(state, budget - budget_consumed)
-                    budget_consumed += step_budget_consumed
+                    fixing_cmd = None
+                    retval, state, command = command.execute(state, budget - budget_consumed)
+                    budget_consumed += command.budget_consumed
                     if retval is not None:
                         return ret(retval)
                     error = None
@@ -117,7 +132,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                     error = str(e)
                     error_cmd = command
 
-    def dump_and_print(message):
+    def dump_and_print(self, message):
         self.context.terminal.clear()
         for line in self.get_lines():
             self.context.terminal.print_line(line)
@@ -129,12 +144,15 @@ ask is cell #n n/e/s/w of cell #m?"""
         new_env_args = self.args
         def sub(arg):
             nonlocal new_env_args
-            if isinstance(arg, Pointer):
-                return arg
-            else:
+            if isinstance(arg, Message):
                 new_env_args = new_env_args + (arg,)
-                return Pointer(len(new_env_args) - 1, type=type(arg))
+                return Pointer(len(new_env_args) - 1)
+            else:
+                return arg
         return m.transform_args(sub), self.copy(args=new_env_args)
+
+    def transform_register_contents(self, f):
+        return self.copy(registers = tuple(r.transform_contents(f) for r in self.registers))
 
     def add_register(self, *contents, n=None, contextualize=True, replace=False, **kwargs):
         state = self
@@ -150,11 +168,33 @@ ask is cell #n n/e/s/w of cell #m?"""
         m = n+1 if replace else n
         new_registers = state.registers[:n] + (new_register,) + state.registers[m:]
         state = state.copy(registers=new_registers)
+        def sub(x):
+            if isinstance(x, Pointer):
+                return x
+            if isinstance(x, RegisterReference):
+                new_n = x.n
+                if (not replace) and new_n >= n:
+                    new_n += 1
+                return RegisterReference(new_n)
+        state = state.transform_register_contents(lambda m : m.transform_args_recursive(sub))
         if replace: state = state.delete_unused_args()
         return state
 
     def delete_register(self, n):
-        return self.copy(registers = self.registers[:n] + self.registers[n+1:]).delete_unused_args()
+        def sub(x):
+            if isinstance(x, RegisterReference):
+                if n < x.n:
+                    return RegisterReference(x.n - 1)
+                elif n == x.n:
+                    return RegisterReference(None)
+                elif n > x.n:
+                    return x
+            else:
+                return x
+        result = self.copy(registers = self.registers[:n] + self.registers[n+1:])
+        result = result.transform_register_contents(lambda m : m.transform_args_recursive(sub))
+        result = result.delete_unused_args()
+        return result
     
     def get_lines(self):
         result = []
@@ -182,7 +222,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                     assert new_m is not None
                     return sub(new_m)[0], True
                 elif m.n > n:
-                    return Pointer(m.n - 1, m.type), False
+                    return Pointer(m.n - 1), False
             elif isinstance(m, Message):
                 def inner_sub(arg):
                     result, changed = sub(arg)
@@ -190,7 +230,7 @@ ask is cell #n n/e/s/w of cell #m?"""
                     return result
                 inner_sub.any_changed = False
                 return m.transform_args_recursive(inner_sub), inner_sub.any_changed
-            raise ValueError
+            return m
         new_args = self.args[:n] + self.args[n+1:]
         return self.copy(registers=sub(self.registers)[0], args=new_args)
 
@@ -206,19 +246,23 @@ ask is cell #n n/e/s/w of cell #m?"""
                 result = result.delete_arg(k)
         return result
 
-    def make_child(self, Q, budget=float('inf'), cmd=None):
-        env = Translator(context=self.context, budget=budget, parent_cmd=cmd)
-        return env.add_register(env.make_head(Q, budget), cmd=cmd)
+    def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
+        env = Translator(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
+        return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
 
-    def make_head(self, Q, budget=float('inf')):
-        return Message('Q[{}]: '.format(budget)) + Q
+    def make_head(self, Q, nominal_budget=float('inf')):
+        return Message('Q[{}]: '.format(nominal_budget)) + Q
 
     def default_child_budget(self):
-        if self.budget == float('inf') or self.budget == 10: return self.budget
-        return self.budget // 10
+        if self.nominal_budget == float('inf') or self.nominal_budget == 10:
+            return self.nominal_budget
+        return self.nominal_budget // 10
 
-    def render_question(self, Q, budget=float('inf')):
-        return Message('Q[{}]: '.format(budget)) + Q
+    def render_question(self, Q, nominal_budget=float('inf'), reg=None):
+        if reg is None:
+            return Message('Q[{}]: '.format(nominal_budget)) + Q
+        if reg is not None:
+            return Message('Q[{}][]: '.format(nominal_budget), reg) + Q
 
     def pre_suggestions(self):
         result = []
@@ -234,22 +278,22 @@ ask is cell #n n/e/s/w of cell #m?"""
 class Translator(RegisterMachine):
 
     kind = "translate"
-    max_registers = 3
+    max_registers = 5
     initial_budget_consumption = 0
     prompt = "-> "
 
-    def make_child(self, Q, budget=float('inf'), cmd=None):
-        env = RegisterMachine(context=self.context, budget=budget, parent_cmd=cmd)
-        return env.add_register(env.make_head(Q, budget), cmd=cmd)
+    def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
+        env = RegisterMachine(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
+        return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
 
     def default_child_budget(self):
-        return self.budget
+        return self.nominal_budget
 
-    def make_head(self, Q, budget=float('inf')):
+    def make_head(self, Q, nominal_budget=float('inf')):
         return Message('Q[concrete]: ') + Q
 
-    def render_question(self, Q, budget=float('inf')):
-        return Message('Q[abstract]: '.format(budget)) + Q
+    def render_question(self, Q, nominal_budget=float('inf'), reg=None):
+        return Message('Q[abstract]{}: '.format("" if reg is None else reg)) + Q
 
 class Context(object):
 

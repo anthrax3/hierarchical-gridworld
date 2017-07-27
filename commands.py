@@ -1,24 +1,33 @@
 import pyparsing as pp
 from utils import unweave
-from messages import Message, Pointer, Channel
+from messages import Message, Pointer, RegisterReference
 import messages
 import worlds
 import main
 
 class BadCommand(Exception):
-    def __init__(self, explanation):
+    def __init__(self, explanation, **kwargs):
+        super().__init__(**kwargs)
         self.explanation = explanation
     def __str__(self):
         return self.explanation
 
 class Command(object):
 
-    def set_context(self, string, state):
+    arg_names = []
+
+    def __init__(self, string=None, state=None, budget_consumed=0, **kwargs):
         self.string = string
         self.state = state
+        self.budget_consumed = budget_consumed
 
     def execute(self, env, budget, cmd):
         raise NotImplemented()
+
+    def copy(self, **kwargs):
+        for k in ["string", "state", "budget_consumed"] + self.arg_names:
+            if k not in kwargs: kwargs[k] = self.__dict__[k]
+        return self.__class__(**kwargs)
 
     def command_for_raise(self):
         return self
@@ -33,58 +42,61 @@ class Malformed(Command):
     pass
 
 def requires_register(f):
-    def decorated(command, env, buget):
-        if env.registers >= env.max_registers:
+    def decorated(command, env, budget):
+        if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
         return f(command, env, budget)
     return decorated
 
 class Interrupted(Command):
-    def __init__(self, exhausted=True, previous=None):
+    arg_names = ["exhausted", "previous"]
+    def __init__(self, exhausted=True, previous=None, **kwargs):
         self.exhausted = exhausted
         self.previous = previous
+        super().__init__(**kwargs)
 
     def make_message(self):
-        s = "<<budget exhuasted>>" if exhausted else "<<interrupted>>"
+        s = "<<budget exhuasted>>" if self.exhausted else "<<interrupted>>"
         return Message(s)
 
 class Ask(Command):
 
-    def __init__(self, question, budget=None, **kwargs):
+    arg_names=["question", "nominal_budget", "result_cmd"]
+    def __init__(self, question, nominal_budget=None, result_cmd=None, **kwargs):
+        super().__init__(**kwargs)
         self.question = question
-        self.budget = budget
+        self.nominal_budget = nominal_budget
+        self.result_cmd = result_cmd
 
     def messages(self):
         return [self.question]
 
     @requires_register
     def execute(self, env, budget):
-        if self.budget is None:
-            self.budget = env.default_child_budget()
+        nominal_budget = env.default_child_budget() if self.nominal_budget is None else self.nominal_budget
         try:
             question = self.question.instantiate(env.args)
-            builtin_response = builtin_handler(question)
-            if builtin_response is not None:
-                result_cmd = None
-                budget_consumed = 1
-                answer = builtin_response
-            else:
-                answerer = env.make_child(question, cmd=self, budget=self.budget)
-                answer, result_cmd, answerer, budget_consumed = answerer.run(self.budget, budget)
-            answer, env = env.contextualize(answer)
-            addressed_question = env.render_question(self.question, budget=self.budget)
-            addressed_answer = Message('A: ') + answer
-            self.result_cmd = result_cmd
-            env = env.add_register(addressed_question, addressed_answer, cmd=self, contextualize=False)
-            return None, env, budget_consumed
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
+        builtin_response = builtin_handler(question)
+        if builtin_response is not None:
+            result_cmd = None
+            budget_consumed = 1
+            answer = builtin_response
+        else:
+            answerer = env.make_child(question, cmd=self, nominal_budget=nominal_budget)
+            answer, result_cmd, budget_consumed = answerer.run(nominal_budget, budget)
+        answer, env = env.contextualize(answer)
+        addressed_question = env.render_question(self.question, nominal_budget=nominal_budget)
+        addressed_answer = Message('A: ') + answer
+        cmd = self.copy(result_cmd=result_cmd,
+                nominal_budget=nominal_budget,
+                budget_consumed=budget_consumed)
+        env = env.add_register(addressed_question, addressed_answer, cmd=cmd, contextualize=False)
+        return None, env, cmd
 
     def command_for_raise(self):
-        if hasattr(self, "result_cmd") and self.result_cmd is not None:
-            return self.result_cmd
-        else:
-            return self
+        return self if self.result_cmd is None else self.result_cmd
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in grid []?"):
@@ -126,7 +138,9 @@ def builtin_handler(Q):
 
 class View(Command):
 
+    arg_names = ["n"]
     def __init__(self, n, **kwargs):
+        super().__init__(**kwargs)
         self.n = n 
 
     def execute(self, env, budget):
@@ -135,11 +149,13 @@ class View(Command):
             raise BadCommand("invalid index")
         new_m, env = env.contextualize(env.args[n])
         env = env.delete_arg(n, new_m, cmd=self)
-        return None, env, 0
+        return None, env, self
 
 class Say(Command):
 
-    def __init__(self, message):
+    arg_names = ["message"]
+    def __init__(self, message, **kwargs):
+        super().__init__(**kwargs)
         self.message = message
 
     def messages(self):
@@ -147,21 +163,24 @@ class Say(Command):
 
     @requires_register
     def execute(self, env, budget):
+        cmd = self.copy(budget_consumed=1)
         try:
-            return None, env.add_register(self.message, cmd=self), 1
+            return None, env.add_register(self.message, cmd=cmd), cmd
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
 class Clear(Command):
 
-    def __init__(self, n):
+    arg_names = ["n"]
+    def __init__(self, n, **kwargs):
+        super().__init__(**kwargs)
         self.n = n
 
     def __str__(self):
         return "clear {}".format(self.n)
 
     def execute(self, env, budget):
-        return None, clear(self.n, env), 0
+        return None, clear(self.n, env), self
 
 def clear(n, env):
     if n == 0:
@@ -172,7 +191,9 @@ def clear(n, env):
 
 class Replace(Command):
 
-    def __init__(self, ns, message):
+    arg_names = ["ns", "message"]
+    def __init__(self, ns, message, **kwargs):
+        super().__init__(**kwargs)
         self.ns = ns
         self.message = message
 
@@ -180,92 +201,101 @@ class Replace(Command):
         return [self.message]
 
     def execute(self, env, budget):
+        cmd = self.copy(budget_consumed=1)
         try:
-            env = env.add_register(self.message, cmd=self)
+            env = env.add_register(self.message, cmd=cmd)
             removed = []
             for n in self.ns:
                 removed.append(n)
                 n -= len([m for m in removed if m < n])
                 env = clear(n, env)
-            return None, env, 1
+            return None, env, cmd
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
 class Reply(Command):
 
-    def __init__(self, message):
+    arg_names = ["message", "result_cmd"]
+    def __init__(self, message, result_cmd=None, **kwargs):
+        super().__init__(**kwargs)
         self.message = message
+        self.result_cmd = result_cmd
 
     @requires_register
     def execute(self, env, budget):
         try:
             answer = self.message.instantiate(env.args)
-            return self.answer, None, 0
+            return answer, env, self
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
     def followup(self, env, followup, cmd):
-        self.result_cmd = cmd
         followup, env = env.contextualize(followup)
         env = env.copy(parent_cmd=cmd)
         addressed_followup = Message("Reply: ") + followup
         addressed_answer = Message("A: ") + self.message
         env = env.add_register(addressed_answer, addressed_followup,
-                contextualize=False, cmd=self)
+                contextualize=False, cmd=self.copy(result_cmd=cmd))
         return env
 
     def command_for_raise(self):
-        if hasattr(self, "result_cmd"):
-            return self.result_cmd
-        else:
-            return self
+        return self if self.result_cmd is None else self.result_cmd
 
 class Raise(Command):
 
-    def __init__(self, n, message):
+    arg_names = ["n", "message", "old_cmd"]
+    def __init__(self, n, message, old_cmd=None, **kwargs):
+        super().__init__(**kwargs)
         self.n = n
         self.message = message
+        self.old_cmd = old_cmd
 
     def messages(self):
         return [self.message]
 
+    @requires_register
     def execute(self, env, budget):
         register = env.registers[self.n]
         try:
             message = Message("Error: ") + self.message.instantiate(env.args)
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
-        self.old_cmd = register.cmd.command_for_raise()
-        error = Message(self.old_cmd.string)
-        state = self.old_cmd.state.add_register(error, message, cmd=self)
-        return None, state, 0
+        old_cmd = register.cmd.command_for_raise()
+        error = Message(old_cmd.string)
+        cmd = self.copy(old_cmd=old_cmd)
+        state = old_cmd.state.add_register(error, message, cmd=cmd)
+        return None, state, cmd
 
     def command_for_fix(self):
-        if hasattr(self, "old_cmd"):
-            return self.old_cmd
-        else:
-            return self
+        return self if self.old_cmd is None else self.old_cmd
 
 class Fix(Command):
 
-    def __init__(self, n):
+    arg_names = ["n"]
+    def __init__(self, n, **kwargs):
+        super().__init__(**kwargs)
         self.n = n
 
 class Resume(Command):
 
-    def __init__(self, n, message):
+    arg_names = ["n", "message", "nominal_budget", "question", "result_cmd"]
+    def __init__(self, n, message, nominal_budget=None, question=None, result_cmd=None, **kwargs):
+        super().__init__(**kwargs)
         self.n = n
         self.message = message
+        self.nominal_budget = nominal_budget
+        self.question = question
+        self.result_cmd = result_cmd
 
-    def execute(self, env, budget)
+    def execute(self, env, budget):
         try:
             register = env.registers[self.n]
         except IndexError:
             assert False
             raise BadCommand("invalid index")
         try:
-            self.budget = register.cmd.budget
-            self.question = register.cmd.question
+            resume_budget = register.cmd.nominal_budget
+            resume_question = register.cmd.question
             result_cmd = register.cmd.result_cmd
         except AttributeError:
             raise BadCommand("can only resume a question register")
@@ -275,24 +305,28 @@ class Resume(Command):
             followup = self.message.instantiate(env.args)
         except messages.BadInstantation:
             raise BadCommand("invalid reference")
-        new_env = result_cmd.followup(env, followup, self)
-        result, self.result_cmd, budget_command = new_env.run(self.budget, budget)
+        new_env = result_cmd.followup(result_cmd.state, followup, self)
+        result, resume_result_cmd, budget_consumed = new_env.run(resume_budget, budget)
         result, env = env.contextualize(result)
+        addressed_question = env.render_question(self.message, resume_budget, messages.RegisterReference(self.n))
         answer = Message("A: ") + result
-        env = env.add_register(self.question, answer, cmd=self,
-                n=self.n, replace=True, contextualize=False)
-        return None, env, budget_consumed
+        cmd = self.copy(nominal_budget=resume_budget, question=resume_question,
+                result_cmd=resume_result_cmd, budget_consumed=budget_consumed)
+        env = env.add_register(addressed_question, answer, cmd=cmd, contextualize=False)
+        return None, env, cmd
 
     def command_for_raise(self):
-        if hasattr(self, "result_cmd"):
-            return self.result_cmd
-        else:
-            return self
+        return self if self.result_cmd is None else self.result_cmd
 
 class More(Command):
 
-    def __init__(self, n):
+    arg_names = ["n", "result_cmd", "nominal_budget", "question"]
+    def __init__(self, n, result_cmd=None, nominal_budget=None, question=None, **kwargs):
+        super().__init__(**kwargs)
         self.n = n
+        self.result_cmd = result_cmd
+        self.nominal_budget = nominal_budget
+        self.question = question
 
     def execute(self, env, budget):
         try:
@@ -301,21 +335,21 @@ class More(Command):
             assert False
             raise BadCommand("invalid index")
         try:
-            self.budget = register.cmd.budget
-            self.question = register.cmd.question
+            more_budget = register.cmd.nominal_budget
+            more_question = register.cmd.question
             result_cmd = register.cmd.result_cmd
         except AttributeError:
             raise BadCommand("can only get more from a question register")
         if not isinstance(result_cmd, Interrupted):
             raise BadCommand("can only get more from interrupted questions")
         if result_cmd.exhausted:
-            self.budget *= 10
+            more_budget *= 10
         new_env = result_cmd.state
-        new_head = new_env.make_head(self.question, self.budget).copy(args=new_env.registers[0].contents[0].args)
+        new_head = new_env.make_head(more_question, more_budget).copy(args=new_env.registers[0].contents[0].args)
         new_env = new_env.add_register(new_head, cmd=self, replace=True, n=0, contextualize=False).copy(parent_cmd=self)
-        budget = min(budget, self.budget)
+        budget = min(budget, more_budget)
         if (hasattr(result_cmd.previous, "result_cmd") and 
-                isinstance(reuslt_cmd.previous.result_cmd, Interrupted) and
+                isinstance(result_cmd.previous.result_cmd, Interrupted) and
                 result_cmd.previous.result_cmd.exhausted == result_cmd.exhausted):
             if isinstance(result_cmd.previous, Ask):
                 new_n = len(new_env.registers) - 1
@@ -323,16 +357,21 @@ class More(Command):
                 new_n = result_cmd.previous.n
             else:
                 raise ValueError("didn't know that this could be interrupted")
-            _, new_env, budget_consumed = Resume(new_n).execute(new_env, budget, src)
+            _, new_env, recursive_more_cmd = self.copy(n=new_n).execute(new_env, budget)
+            previous_cmd = recursive_more_cmd
+            budget_consumed = recursive_more_cmd.budget_consumed
         else:
             budget_consumed = 0
-        result, self.result_cmd, step_budget_consumed = new_env.run(self.budget, budget - budget_consumed)
+            previous_cmd = None
+        result, more_result_cmd, step_budget_consumed = new_env.run(more_budget - budget_consumed, budget - budget_consumed, previous_cmd=previous_cmd)
         budget_consumed += step_budget_consumed
         result, env = env.contextualize(result)
         addressed_answer = Message('A: ') + result
-        env = env.add_register(env.render_question(self.question, self.budget), addressed_answer,
-            cmd = self, replace=True, n = self.n, contextualize=False)
-        return None, env, budget_consumed
+        more_cmd = self.copy(nominal_budget=more_budget, question=more_question,
+                result_cmd=more_result_cmd, budget_consumed=budget_consumed)
+        env = env.add_register(env.render_question(more_question, more_budget), addressed_answer,
+            cmd=more_cmd, replace=True, n = self.n, contextualize=False)
+        return None, env, more_cmd
     
 #----parsing
 
@@ -375,27 +414,28 @@ power_of_ten = (pp.Literal("1") + pp.Word("0")).setParseAction(lambda t : int(t[
 prose = pp.Word(" ,!?+-/*.;:_<>=&%{}[]\'\"" + pp.alphas).leaveWhitespace()
 
 message_pointer = (raw("#") + number).leaveWhitespace()
-message_pointer.setParseAction(lambda x : Pointer(x[0], Message))
+message_pointer.setParseAction(lambda x : Pointer(x[0]))
+
+register_reference = (raw("@") + number).leaveWhitespace()
+register_reference.setParseAction(lambda x : RegisterReference(x[0]))
 
 def message_action(xs):
     text, args = unweave(xs)
     if text == ("",):
         raise pp.ParseException("can't parse empty message")
+    return Message(text, args)
 
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
-argument = submessage | message_pointer
+argument = submessage | message_pointer | register_reference
 literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
     ).setParseAction(message_action)
 message << literal_message
 
-target_modifier = raw("@")+number
-target_modifier.setParseAction(lambda xs : ("recipient", Pointer(xs[0], type=Channel)))
-
 budget_modifier = power_of_ten + w
-budget_modifier.setParseAction(lambda xs : ("budget", xs[0]))
+budget_modifier.setParseAction(lambda xs : ("nominal_budget", xs[0]))
 
 ask_modifiers = pp.Optional(budget_modifier)
 ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
@@ -424,10 +464,10 @@ raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
 fix_command = raw("fix") + w + number
 fix_command.setParseAction(lambda xs : Fix(xs[0]))
 
-resume_command = raw("resume") + w + number + w + message
+resume_command = (raw("resume") | raw("ask@")) + w + number + w + message
 resume_command.setParseAction(lambda xs : Resume(xs[0], xs[1]))
 
 more_command = raw("more") + w + number
-more_command.setParseAction(lambda xs : Resume(xs[0]))
+more_command.setParseAction(lambda xs : More(xs[0]))
 
 command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command | more_command | resume_command
