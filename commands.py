@@ -267,7 +267,6 @@ class Reply(Command):
         self.message = message
         self.result_cmd = result_cmd
 
-    @requires_register
     def execute(self, env, budget):
         try:
             answer = self.message.instantiate(env.args)
