@@ -505,7 +505,7 @@ ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
 ask_command = (raw("ask") | raw("Q:") | raw("Q")) + ask_modifiers + w + message
 ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply") | raw("A:") | raw("A")) + w + message
+reply_command = (raw("reply") | raw("A:") | raw("A") | raw("return")) + w + message
 reply_command.setParseAction(lambda xs : Reply(xs[0]))
 
 clear_command = (raw("clear")) + w + number
@@ -526,7 +526,7 @@ raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
 fix_command = raw("fix") + w + number
 fix_command.setParseAction(lambda xs : Fix(xs[0]))
 
-resume_command = (raw("resume") | raw("ask@")) + w + number + w + message
+resume_command = (raw("resume") | raw("ask@") | raw("reply")) + w + number + w + message
 resume_command.setParseAction(lambda xs : Resume(xs[0], xs[1]))
 
 more_command = raw("more") + w + number
