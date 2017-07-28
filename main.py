@@ -131,6 +131,12 @@ ask is cell #n n/e/s/w of cell #m?"""
                 except commands.BadCommand as e:
                     error = str(e)
                     error_cmd = command
+                except UnwindRecursion as e:
+                    if e.unwound(): #reraise unless we've unwound all n steps of recursion
+                        error = "Recursion error"
+                        error_cmd = command
+                except RecursionError:
+                    raise UnwindRecursion(30)
 
     def dump_and_print(self, message=""):
         if self.context.terminal.closed:
@@ -313,6 +319,16 @@ class Context(object):
         for v in self.suggesters.values():
             v.close()
         self.terminal.__exit__(*args)
+
+class UnwindRecursion(Exception):
+
+    def __init__(self, n):
+        self.n = n
+        
+    def unwound(self):
+        if self.n == 0:
+            return True
+        raise UnwindRecursion(self.n-1)
 
 def get_response(env, kind, use_cache=True, replace_old=False, error_message=None,
         prompt=">>> ", default=None, make_pre_suggestions=lambda : []):
