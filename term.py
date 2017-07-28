@@ -147,6 +147,7 @@ def pad_to(k, s):
 class Terminal(object):
 
     def __init__(self):
+        self.closed = False
         pass
 
     def __enter__(self):
@@ -159,6 +160,7 @@ class Terminal(object):
         return self
 
     def __exit__(self, *args):
+        self.closed = True
         self.t.__exit__(*args)
 
     def putch(self, x, y, ch, fg=termbox.DEFAULT, bg=termbox.DEFAULT):

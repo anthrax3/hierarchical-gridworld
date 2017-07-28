@@ -25,7 +25,7 @@ class FixedError(Exception):
     pass
 
 class RegisterMachine(object):
-    max_registers = 6
+    max_registers = 7
     initial_budget_consumption = 1
     kind = "implement"
     prompt = ">> "
@@ -66,7 +66,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         return self.__class__(**kwargs)
 
     def __str__(self):
-        return '\n'.join(self.lines)
+        return '\n'.join(self.get_lines())
 
     def run(self, nominal_budget=float('inf'), budget=float('inf'), previous_cmd=None):
         state = self
@@ -132,13 +132,17 @@ ask is cell #n n/e/s/w of cell #m?"""
                     error = str(e)
                     error_cmd = command
 
-    def dump_and_print(self, message):
-        self.context.terminal.clear()
-        for line in self.get_lines():
-            self.context.terminal.print_line(line)
-        self.context.terminal.print_line(message)
-        term.get_input(self.context.terminal)
-        return
+    def dump_and_print(self, message=""):
+        if self.context.terminal.closed:
+            for line in self.get_lines():
+                print(line)
+            print(message)
+        else:
+            self.context.terminal.clear()
+            for line in self.get_lines():
+                self.context.terminal.print_line(line)
+            self.context.terminal.print_line(message)
+            term.get_input(self.context.terminal)
 
     def contextualize(self, m):
         new_env_args = self.args
