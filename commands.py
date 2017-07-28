@@ -407,22 +407,28 @@ class More(Command):
         new_first_register = (new_head,) + new_env.registers[0].contents[1:]
         new_env = new_env.add_register(*new_first_register, cmd=self, replace=True, n=0, contextualize=False).copy(parent_cmd=self)
         budget = min(budget, more_budget)
+        budget_consumed = 0
+        previous_cmd = None
         if (hasattr(result_cmd.previous, "result_cmd") and 
-                isinstance(result_cmd.previous.result_cmd, Interrupted) and
-                result_cmd.previous.result_cmd.exhausted == result_cmd.exhausted):
-            if isinstance(result_cmd.previous, Ask):
-                new_n = len(new_env.registers) - 1
-            elif isinstance(result_cmd.previous, More) or isinstance(result_cmd.previous, Resume):
-                new_n = result_cmd.previous.n
-            else:
-                raise ValueError("didn't know that this could be interrupted")
-            _, new_env, recursive_more_cmd = self.copy(n=new_n).execute(new_env, budget)
-            previous_cmd = recursive_more_cmd
-            budget_consumed = recursive_more_cmd.budget_consumed
-        else:
-            budget_consumed = 0
-            previous_cmd = None
-        result, more_result_cmd, step_budget_consumed = new_env.run(more_budget - budget_consumed, budget - budget_consumed, previous_cmd=previous_cmd)
+                isinstance(result_cmd.previous.result_cmd, Interrupted)):
+            if ((not result_cmd.previous.result_cmd.exhausted and not result_cmd.exhausted) or
+                    isinstance(new_env, main.Translator)):
+                if isinstance(result_cmd.previous, Ask):
+                    new_n = len(new_env.registers) - 1
+                elif isinstance(result_cmd.previous, More) or isinstance(result_cmd.previous, Resume):
+                    new_n = result_cmd.previous.n
+                else:
+                    raise ValueError("didn't know that this could be interrupted")
+                recursive_cmd_string = "<<recursively applied more {}>>".format(new_n)
+                recursive_more_cmd = self.copy(n=new_n, state=new_env, string=recursive_cmd_string)
+                _, new_env, recursive_more_cmd = recursive_more_cmd.execute(new_env, budget)
+                previous_cmd = recursive_more_cmd
+                budget_consumed += recursive_more_cmd.budget_consumed
+        result, more_result_cmd, step_budget_consumed = new_env.run(
+                more_budget - budget_consumed,
+                budget - budget_consumed, 
+                previous_cmd=previous_cmd
+            )
         budget_consumed += step_budget_consumed
         result, env = env.contextualize(result)
         addressed_answer = Message('A: ') + result
@@ -433,6 +439,11 @@ class More(Command):
         env = env.add_register(*new_contents,
                 cmd=more_cmd, replace=True, n = self.n, contextualize=False)
         return None, env, more_cmd
+
+    def command_for_raise(self):
+        if self.result_cmd is not None:
+            return self.result_cmd
+        return self
     
 #----parsing
 

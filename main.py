@@ -78,7 +78,7 @@ ask is cell #n n/e/s/w of cell #m?"""
         fixing_cmd = None
         command = self.parent_cmd if previous_cmd is None else previous_cmd
         def ret(m):
-            if fixed and self.parent_cmd != state.parent_cmd:
+            if self.parent_cmd != state.parent_cmd:
                 raise FixedError()
             return m, command, budget_consumed
         while True:
