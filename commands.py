@@ -151,7 +151,7 @@ class View(Command):
         if n < 0 or n >= len(env.args):
             raise BadCommand("invalid index")
         new_m, env = env.contextualize(env.args[n])
-        env = env.delete_arg(n, new_m, cmd=self)
+        env = env.replace_arg(n, new_m, cmd=self)
         return None, env, self
 
 class Say(Command):

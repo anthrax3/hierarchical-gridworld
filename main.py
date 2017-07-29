@@ -161,8 +161,10 @@ ask is cell #n n/e/s/w of cell #m?"""
                 return arg
         return m.transform_args(sub), self.copy(args=new_env_args)
 
-    def transform_register_contents(self, f):
-        return self.copy(registers = tuple(r.transform_contents(f) for r in self.registers))
+    def transform_register_args(self, f):
+        def g(m):
+            return m.transform_args_recursive(f)
+        return self.copy(registers = tuple(r.transform_contents(g) for r in self.registers))
 
     def add_register(self, *contents, n=None, contextualize=True, replace=False, **kwargs):
         state = self
@@ -186,8 +188,8 @@ ask is cell #n n/e/s/w of cell #m?"""
                 if (not replace) and new_n >= n:
                     new_n += 1
                 return RegisterReference(new_n)
-        state = state.transform_register_contents(lambda m : m.transform_args_recursive(sub))
-        if replace: state = state.delete_unused_args()
+        state = state.transform_register_args(sub)
+        if replace: state = state.pack_args()
         return state
 
     def delete_register(self, n):
@@ -202,8 +204,8 @@ ask is cell #n n/e/s/w of cell #m?"""
             else:
                 return x
         result = self.copy(registers = self.registers[:n] + self.registers[n+1:])
-        result = result.transform_register_contents(lambda m : m.transform_args_recursive(sub))
-        result = result.delete_unused_args()
+        result = result.transform_register_args(sub)
+        result = result.pack_args()
         return result
     
     def get_lines(self):
@@ -216,7 +218,7 @@ ask is cell #n n/e/s/w of cell #m?"""
             result.append("")
         return result
 
-    def delete_arg(self, n, new_m=None, cmd=None):
+    def replace_arg(self, n, new_m, cmd=None):
         def sub(m):
             if isinstance(m, tuple):
                 results = [sub(c) for c in m]
@@ -229,7 +231,6 @@ ask is cell #n n/e/s/w of cell #m?"""
                 if m.n < n:
                     return m, False
                 elif m.n == n:
-                    assert new_m is not None
                     return sub(new_m)[0], True
                 elif m.n > n:
                     return Pointer(m.n - 1), False
@@ -244,17 +245,22 @@ ask is cell #n n/e/s/w of cell #m?"""
         new_args = self.args[:n] + self.args[n+1:]
         return self.copy(registers=sub(self.registers)[0], args=new_args)
 
-    def delete_unused_args(self):
-        in_use =  {k:False for k in range(len(self.args))}
-        for r in self.registers:
-            for m in r.contents:
-                for arg in m.get_leaf_arguments():
-                    if isinstance(arg, Pointer): in_use[arg.n] = True
-        result = self
-        for k in reversed(list(range(len(self.args)))):
-            if not in_use[k]:
-                result = result.delete_arg(k)
-        return result
+    def pack_args(self):
+        arg_order = {}
+        new_args = []
+        for register in self.registers:
+            for message in register.contents:
+                for x in message.get_leaf_arguments():
+                    if isinstance(x, Pointer) and x.n not in arg_order:
+                        arg_order[x.n] = len(arg_order)
+                        new_args.append(self.args[x.n])
+        new_args = tuple(new_args)
+        def sub(x):
+            if isinstance(x, Pointer):
+                return Pointer(n=arg_order[x.n])
+            else:
+                return x
+        return self.copy(args=new_args).transform_register_args(sub)
 
     def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
         env = Translator(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
