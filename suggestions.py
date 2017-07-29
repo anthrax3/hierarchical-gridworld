@@ -58,35 +58,27 @@ class Suggester(object):
         cache = self.cache
         shortcuts = []
         def add_shortcut(m):
-            h = m.format(["()"] * m.size)
+            h = m.format(["#"] * m.size)
             if useful_shortcut(h) and len(shortcuts) < num_shortcuts and h not in shortcuts:
                 shortcuts.append(h)
         def useful_shortcut(h):
             return len(h) > 8
-        for m in env.messages:
-            for h in messages.submessages(messages.strip_prefix(m), include_root=True):
-                add_shortcut(h)
-        for c in env.actions:
-            for m in [c] if isinstance(c, messages.Message) else c.messages():
-                for h in messages.submessages(m, include_root=True):
+        for register in env.registers:
+            for m in register.contents:
+                for h in messages.submessages(messages.strip_prefix(m), include_root=True):
                     add_shortcut(h)
         def useful_suggestion(h):
             c = commands.parse_command(h)
             m = commands.parse_message(h)
-            if c is not None:
-                for m in c.messages():
-                    try:
+            try:
+                if c is not None:
+                    for m in c.messages():
                         m.instantiate(env.args)
-                    except messages.BadInstantiation:
-                        return False
-                return True
-            elif m is not None:
-                try:
+                elif m is not None:
                     m.instantiate(env.args)
-                    return True
-                except messages.BadInstantiation:
-                    return False
-            return False
+                return True
+            except messages.BadInstantiation:
+                return False
         suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
         for h in suggestions:
             c = commands.parse_command(h)
@@ -100,10 +92,6 @@ class Suggester(object):
                     add_shortcut(sub_m)
         return suggestions, shortcuts
 
-    def default(self, env, obs):
-        return ""
-
-
 class ImplementSuggester(Suggester):
     def __init__(self):
         super().__init__("implement")
@@ -111,10 +99,6 @@ class ImplementSuggester(Suggester):
 class TranslateSuggester(Suggester):
     def __init__(self):
         super().__init__("translate")
-
-    def default(self, env, obs):
-        return str(messages.strip_prefix(env.messages[-1]))
-
 
 def init_database():
     with closing(sqlite3.connect("memoize.db")) as conn:

@@ -2,12 +2,6 @@ from utils import areinstances, interleave, unweave
 import six
 
 class Referent(object):
-    """
-    A Referent is anything that can be referred to in a message,
-    including Messages, Pointers, and Channels
-    """
-
-    symbol = "?"
 
     def instantiate(self, xs):
         raise NotImplemented()
@@ -20,21 +14,26 @@ class Message(Referent):
     A Message consists of text interspersed with Referents
     """
 
-    symbol = "#"
-
-    def __init__(self, text, *args, pending=False):
+    def __init__(self, text, args=(), pending=False):
         if isinstance(text, six.string_types):
             text = tuple(text.split("[]"))
-        args = tuple(args)
+        if isinstance(args, Referent):
+            args = (args,)
         self.text = text
         self.args = args 
         self.pending = pending
         if not pending:
             assert self.well_formed()
 
+    def copy(self, **kwargs):
+        for k in ["text", 'args', "pending"]:
+            if k not in kwargs: kwargs[k] = self.__dict__[k]
+        return Message(**kwargs)
+
     def finalize_args(self, args):
         assert self.pending
         self.args = args
+        self.pending = False
         assert self.well_formed()
 
     def matches(self, text):
@@ -54,18 +53,17 @@ class Message(Referent):
 
     def __add__(self, other):
         joined = self.text[-1] + other.text[0]
-        return Message(self.text[:-1] + (joined,) + other.text[1:], *(self.args + other.args))
+        return Message(self.text[:-1] + (joined,) + other.text[1:], self.args + other.args)
 
     def format(self, names):
         return "".join(interleave(self.text, names))
 
     def format_with_indices(self, indices):
-        return self.format(["{}{}".format(arg.symbol, index) for arg, index in zip(self.args, indices)])
+        return self.format(["#{}".format(index) for index in indices])
 
     def __str__(self):
         def f(arg):
-            s = "({})" if arg.symbol == "#" else "{}"
-            return s.format(arg)
+            return "({})".format(arg) if isinstance(arg, Message) else str(arg)
         return self.format([f(arg) for arg in self.args])
 
     def instantiate(self, xs):
@@ -85,7 +83,16 @@ class Message(Referent):
         return result
 
     def transform_args(self, f):
-        return Message(self.text, *[f(a) for a in self.args])
+        return Message(self.text, tuple(f(a) for a in self.args))
+
+    def get_leaf_arguments(m, seen=None):
+        if seen is None: seen = set()
+        seen.add(m)
+        for arg in m.args:
+            if isinstance(arg, Message):
+                yield from arg.get_leaf_arguments(seen)
+            else:
+                yield arg
 
 class WorldMessage(Message):
 
@@ -121,27 +128,16 @@ def get_cell(m):
         return get_cell(m.args[0])
     return None
 
-class Channel(Referent):
-    """
-    A Channel is a wrapper around an Env, that lets it be pointed to in messages
-    """
-
-    symbol = "@"
-
-    def __init__(self, implementer, translator):
-        self.implementer = implementer
-        self.translator = translator
-
-    def well_formed(self):
-        return True
-
-    def instantiate(self, xs):
-        raise Exception("should not try to instantiate a channel")
-
 def addressed_message(message, implementer, translator, question=False, budget=float('inf')):
     budget_str = "" if budget == float('inf') else ", budget {}".format(budget)
     channel = Channel(implementer=implementer, translator=translator)
     return Message("{} from []{}: ".format("Q" if question else "A", budget_str), channel) + message
+
+def address_answer(A, sender):
+    return Message("[]: ", sender) + A
+
+def address_question(Q):
+    return Message("Q: ") + Q
 
 def strip_prefix(message, sep=": "):
     for i, t in enumerate(message.text):
@@ -149,7 +145,7 @@ def strip_prefix(message, sep=": "):
             new_args = message.args[i:]
             new_t = sep.join(t.split(sep)[1:])
             new_text = (new_t,) + message.text[i+1:]
-            return Message(new_text, *new_args)
+            return Message(new_text, new_args)
     return message
 
 def submessages(ref, include_root=True, seen=None):
@@ -161,34 +157,40 @@ def submessages(ref, include_root=True, seen=None):
         for arg in ref.args:
             yield from submessages(arg, seen=seen)
 
-class Pointer(Referent):
+class RegisterReference(Referent):
     """
-    A Pointer is an abstract variable,
-    which can be instantiated given a list of arguments
+    A reference to a register, that will shift as registers are added or deleted
     """
 
-    def __init__(self, n, type=Referent):
+    def __init__(self, n):
         self.n = n
-        self.type = type
+
+    def __str__(self):
+        return "@{}".format("?" if self.n is None else self.n)
+
+    def instantiate(self, xs):
+        return self
+
+class Pointer(Referent):
+    """
+    A Pointer is an integer, that indexes into a list of arguments
+    """
+
+    def __init__(self, n):
+        self.n = n
         assert self.well_formed()
 
     def well_formed(self):
         return (
-            issubclass(self.type, Referent) and
-            self.type != self.__class__ and
             isinstance(self.n, int)
         )
 
     def instantiate(self, xs):
-        if self.n >= len(xs) or self.n < 0:
+        if self.n < 0: raise BadInstantiation()
+        try:
+            return xs[self.n]
+        except IndexError:
             raise BadInstantiation()
-        x = xs[self.n]
-        if not isinstance(x, self.type): raise BadInstantiation()
-        return x
-
-    @property
-    def symbol(self):
-        return "{}->".format(self.type.symbol)
 
     def __str__(self):
-        return "{}{}".format(self.type.symbol, self.n)
+        return "#{}".format(self.n)

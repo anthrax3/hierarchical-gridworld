@@ -33,20 +33,22 @@ def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
 
 class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[], shortcuts={}, default=""):
+    def __init__(self, t, x, y, suggestions=[], pre_suggestions=[], shortcuts={}, default=""):
         self.x = x
         self.y = y
         self.s = default
         self.cursor = len(self.s)
         self.high_water = len(self.s)
         self.t = t
-        self.drafts = [None] + suggestions
-        self.current_draft = 0
+        self.drafts = pre_suggestions + [None] + suggestions
+        self.current_draft = len(pre_suggestions)
+        self.initial_draft = len(pre_suggestions)
         self.shortcuts = shortcuts
 
     def move_to_draft(self, new_draft):
         cursor_to_end = len(self.s) - self.cursor
-        self.drafts[self.current_draft] = self.s
+        if self.current_draft == self.initial_draft:
+            self.drafts[self.current_draft] = self.s
         self.s = self.drafts[new_draft]
         self.current_draft = new_draft
         self.cursor = max(0, len(self.s) - cursor_to_end)
@@ -103,10 +105,13 @@ class Input(object):
                 self.cursor += self.t.width
             elif self.current_draft < len(self.drafts) - 1:
                 self.move_to_draft(self.current_draft+1)
+        elif key == termbox.KEY_CTRL_U:
+            self.s = ""
+            self.cursor = 0
         elif key == termbox.KEY_CTRL_R:
-            self.jump_to_paren(-1)
+            self.jump_to_arg(-1)
         elif key == termbox.KEY_CTRL_K:
-            self.jump_to_paren(1)
+            self.jump_to_arg(1)
         elif key == termbox.KEY_ENTER:
             return self.s
         elif key in self.shortcuts:
@@ -117,12 +122,17 @@ class Input(object):
         self.refresh()
         return None
 
-    def jump_to_paren(self, d):
+    def jump_to_arg(self, d):
         def to():
             return self.cursor + d
+        stops = "()#"
+        ready = False
         while to() <= len(self.s) and to() >= 0:
+            if self.cursor > 0 and self.s[self.cursor - 1] == " ": ready =True
             self.cursor = to()
-            if self.cursor == 0 or self.s[self.cursor-1] == ")":
+            if self.cursor == 0:
+                return
+            if self.s[self.cursor - 1] in stops and ready:
                 return
 
     def elicit(self):
@@ -137,6 +147,7 @@ def pad_to(k, s):
 class Terminal(object):
 
     def __init__(self):
+        self.closed = False
         pass
 
     def __enter__(self):
@@ -149,6 +160,7 @@ class Terminal(object):
         return self
 
     def __exit__(self, *args):
+        self.closed = True
         self.t.__exit__(*args)
 
     def putch(self, x, y, ch, fg=termbox.DEFAULT, bg=termbox.DEFAULT):
