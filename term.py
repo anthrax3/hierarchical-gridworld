@@ -14,6 +14,7 @@ shortcut_bindings = [
     ('t', termbox.KEY_CTRL_T),
 ]
 
+
 def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
     """
     Prompt the user for input
@@ -27,21 +28,34 @@ def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
     for (c, k), template in zip(shortcut_bindings, shortcuts):
         shortcut_dict[k] = template
     if prompt is not None: t.print_line(prompt)
-    inputter = Input(t, t.x, t.y, suggestions=suggestions, shortcuts=shortcut_dict, **kwargs)
+    inputter = Input(t,
+                     t.x,
+                     t.y,
+                     suggestions=suggestions,
+                     shortcuts=shortcut_dict,
+                     **
+                     kwargs)
     if shortcuts or suggestions:
         for i in range(3):
             t.print_line("")
     for i, suggestion in enumerate(suggestions):
-        t.print_line("{}. {}".format(i+1, suggestion))
+        t.print_line("{}. {}".format(i + 1, suggestion))
     if suggestions:
         t.print_line("")
     for (c, k), template in zip(shortcut_bindings, shortcuts):
         t.print_line("{}: {}".format(c, template))
     return inputter.elicit()
 
-class Input(object):
 
-    def __init__(self, t, x, y, suggestions=[], pre_suggestions=[], shortcuts={}, default=""):
+class Input(object):
+    def __init__(self,
+                 t,
+                 x,
+                 y,
+                 suggestions=[],
+                 pre_suggestions=[],
+                 shortcuts={},
+                 default=""):
         self.x = x
         self.y = y
         self.s = default
@@ -84,20 +98,21 @@ class Input(object):
 
     def remove_ch(self, n=None):
         if n is None: n = self.cursor
-        self.s = self.s[:n-1] + self.s[n:]
+        self.s = self.s[:n - 1] + self.s[n:]
         if n <= self.cursor:
             self.cursor -= 1
 
     def paren_to_highlight(self):
         if self.cursor < len(self.s) and self.s[self.cursor] in "()":
             return self.cursor
-        if self.cursor > 0 and self.s[self.cursor-1] in "()":
+        if self.cursor > 0 and self.s[self.cursor - 1] in "()":
             return self.cursor - 1
         return None
 
     def poll(self):
         ch, key = self.t.poll()
-        if key in [termbox.KEY_BACKSPACE, termbox.KEY_BACKSPACE2] and self.cursor > 0:
+        if key in [termbox.KEY_BACKSPACE, termbox.KEY_BACKSPACE2
+                   ] and self.cursor > 0:
             self.remove_ch()
         elif key == termbox.KEY_ARROW_LEFT and self.cursor > 0:
             self.cursor -= 1
@@ -107,12 +122,12 @@ class Input(object):
             if self.cursor > self.t.width:
                 self.cursor -= self.t.width
             elif self.current_draft > 0:
-                self.move_to_draft(self.current_draft-1)
+                self.move_to_draft(self.current_draft - 1)
         elif key == termbox.KEY_ARROW_DOWN:
             if self.cursor < len(self.s) - self.t.width:
                 self.cursor += self.t.width
             elif self.current_draft < len(self.drafts) - 1:
-                self.move_to_draft(self.current_draft+1)
+                self.move_to_draft(self.current_draft + 1)
         elif key == termbox.KEY_CTRL_U:
             self.s = ""
             self.cursor = 0
@@ -133,10 +148,11 @@ class Input(object):
     def jump_to_arg(self, d):
         def to():
             return self.cursor + d
+
         stops = "()#"
         ready = False
         while to() <= len(self.s) and to() >= 0:
-            if self.cursor > 0 and self.s[self.cursor - 1] == " ": ready =True
+            if self.cursor > 0 and self.s[self.cursor - 1] == " ": ready = True
             self.cursor = to()
             if self.cursor == 0:
                 return
@@ -149,11 +165,12 @@ class Input(object):
             result = self.poll()
             if result is not None: return result
 
+
 def pad_to(k, s):
     return s + " " * (k - len(s))
 
-class Terminal(object):
 
+class Terminal(object):
     def __init__(self):
         self.closed = False
         pass
@@ -173,7 +190,7 @@ class Terminal(object):
 
     def putch(self, x, y, ch, fg=termbox.DEFAULT, bg=termbox.DEFAULT):
         if ch == "\n":
-            return (0, y+1)
+            return (0, y + 1)
         else:
             self.t.change_cell(x, y, ord(ch), fg, bg)
             return self.advance(x, y)

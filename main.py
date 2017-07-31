@@ -39,6 +39,7 @@ ask move the agent n/e/s/w in grid #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
+
 class Register(utils.Copyable):
     """
     A register stores a series of messages,
@@ -46,12 +47,14 @@ class Register(utils.Copyable):
     """
 
     arg_names = ["contents", "cmd"]
+
     def __init__(self, contents, cmd=None):
         self.contents = contents
         self.cmd = cmd
 
     def transform_contents(self, f):
         return self.copy(contents=tuple(f(x) for x in self.contents))
+
 
 class RegisterMachine(utils.Copyable):
     """
@@ -61,14 +64,21 @@ class RegisterMachine(utils.Copyable):
     which registers and commands can reference using pointers.
     """
 
-    max_registers = 7                   # if all 7 registers are full, can't make new ones
-    cost_to_ask_Q = 0                   # asking questions is free, you pay when they are translated
-    kind = "implement"                  # used to choose which suggestions to show
+    max_registers = 7  # if all 7 registers are full, can't make new ones
+    cost_to_ask_Q = 0  # asking questions is free, you pay when they are translated
+    kind = "implement"  # used to choose which suggestions to show
     prompt = ">> "
 
-    arg_names = ["registers", "context", "args", "use_cache", "nominal_budget", "parent_cmd"]
+    arg_names = ["registers", "context", "args", "use_cache", "nominal_budget",
+                 "parent_cmd"]
 
-    def __init__(self, registers=(), args=(), context=None, use_cache=True, nominal_budget=float('inf'), parent_cmd=None):
+    def __init__(self,
+                 registers=(),
+                 args=(),
+                 context=None,
+                 use_cache=True,
+                 nominal_budget=float('inf'),
+                 parent_cmd=None):
         self.registers = registers
         self.args = args
         self.context = context
@@ -97,22 +107,27 @@ class RegisterMachine(utils.Copyable):
         and then replace each of m's arguments with a pointer.
         """
         new_env_args = self.args
+
         def sub(field):
             nonlocal new_env_args
             if isinstance(field, Message):
-                new_env_args = new_env_args + (field,)
+                new_env_args = new_env_args + (field, )
                 return Pointer(len(new_env_args) - 1)
             else:
                 return field
+
         return m.transform_fields(sub), self.copy(args=new_env_args)
 
     def transform_register_fields(self, f):
         """
         Apply f to every argument of every message in every register.
         """
+
         def g(m):
             return m.transform_fields_recursive(f)
-        return self.copy(registers = tuple(r.transform_contents(g) for r in self.registers))
+
+        return self.copy(
+            registers=tuple(r.transform_contents(g) for r in self.registers))
 
     def add_register(self, *contents, n=None, contextualize=True, replace=False, **kwargs):
         """
@@ -132,9 +147,11 @@ class RegisterMachine(utils.Copyable):
                 new_contents.append(new_c)
             contents = tuple(new_contents)
         new_register = Register(contents, **kwargs)
-        m = n+1 if replace else n
-        new_registers = state.registers[:n] + (new_register,) + state.registers[m:]
+        m = n + 1 if replace else n
+        new_registers = state.registers[:n] + (
+            new_register, ) + state.registers[m:]
         state = state.copy(registers=new_registers)
+
         def sub(x):
             if isinstance(x, Pointer):
                 return x
@@ -143,6 +160,7 @@ class RegisterMachine(utils.Copyable):
                 if (not replace) and new_n >= n:
                     new_n += 1
                 return RegisterReference(new_n)
+
         state = state.transform_register_fields(sub)
         if replace: state = state.pack_args()
         return state
@@ -151,8 +169,9 @@ class RegisterMachine(utils.Copyable):
         """
         Delete the register n, then remove all unused arguments
         """
-        return self.copy(registers = self.registers[:n] + self.registers[n+1:]).pack_args()
-    
+        return self.copy(
+            registers=self.registers[:n] + self.registers[n + 1:]).pack_args()
+
     def get_lines(self):
         """
         Get a sequence of lines that represent the current state of the register machine.
@@ -170,16 +189,22 @@ class RegisterMachine(utils.Copyable):
         """
         Replace each pointer to argument n with new_m, then remove argument n
         """
+
         def affected(m):
             return isinstance(m, Pointer) and m.n == n
+
         def sub(m):
             return new_m if affected(m) else m
+
         def transform_register(r):
             any_affected = False
             for m in r.contents:
-                any_affected = any_affected or any(affected(l) for l in m.get_leaves())
+                any_affected = any_affected or any(affected(l)
+                                                   for l in m.get_leaves())
             return r.copy(cmd=cmd) if any_affected and cmd is not None else r
-        result = self.copy(registers=tuple(transform_register(r) for r in self.registers))
+
+        result = self.copy(
+            registers=tuple(transform_register(r) for r in self.registers))
         return result.transform_register_fields(sub).pack_args()
 
     def pack_args(self):
@@ -196,11 +221,13 @@ class RegisterMachine(utils.Copyable):
                         arg_order[x.n] = len(arg_order)
                         new_args.append(self.args[x.n])
         new_args = tuple(new_args)
+
         def sub(x):
             if isinstance(x, Pointer):
                 return Pointer(n=arg_order[x.n])
             else:
                 return x
+
         return self.copy(args=new_args).transform_register_fields(sub)
 
     def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
@@ -208,7 +235,9 @@ class RegisterMachine(utils.Copyable):
         Create a register machine that should be used to answer sub-queries.
         Normal machines create translators, translators create normal machines.
         """
-        env = Translator(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
+        env = Translator(context=self.context,
+                         nominal_budget=nominal_budget,
+                         parent_cmd=cmd)
         return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
 
     def make_head(self, Q, nominal_budget=float('inf')):
@@ -244,7 +273,8 @@ class RegisterMachine(utils.Copyable):
                 elif utils.starts_with("Q", m.text[0]):
                     result.append("Q: " + s)
         return result
-    
+
+
 class Translator(RegisterMachine):
     """
     A register machine with fewer registers,
@@ -260,7 +290,9 @@ class Translator(RegisterMachine):
     prompt = "-> "
 
     def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
-        env = RegisterMachine(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
+        env = RegisterMachine(context=self.context,
+                              nominal_budget=nominal_budget,
+                              parent_cmd=cmd)
         return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
 
     def default_child_budget(self):
@@ -270,7 +302,9 @@ class Translator(RegisterMachine):
         return Message('Q[concrete]: ') + Q
 
     def render_question(self, Q, nominal_budget=float('inf'), reg=None):
-        return Message('Q[abstract]{}: '.format("" if reg is None else reg)) + Q
+        return Message('Q[abstract]{}: '.format("" if reg is None else
+                                                reg)) + Q
+
 
 class Context(object):
     """
@@ -283,7 +317,10 @@ class Context(object):
         self.terminal = term.Terminal()
 
     def __enter__(self):
-        self.suggesters = {"implement":suggestions.ImplementSuggester(), "translate":suggestions.TranslateSuggester()}
+        self.suggesters = {
+            "implement": suggestions.ImplementSuggester(),
+            "translate": suggestions.TranslateSuggester()
+        }
         self.terminal.__enter__()
         return self
 
@@ -292,6 +329,7 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
+
 class ChangedContinuationError(Exception):
     """
     Raised when we jump out of or into a computation and then try to return
@@ -299,6 +337,7 @@ class ChangedContinuationError(Exception):
     This is expected to happen sometimes when using Raise or Fix commands
     """
     pass
+
 
 class UnwindRecursion(Exception):
     """
@@ -313,28 +352,37 @@ class UnwindRecursion(Exception):
 
     def __init__(self, n):
         self.n = n
-        
+
     def unwound(self):
         if self.n == 0:
             return True
-        raise UnwindRecursion(self.n-1)
+        raise UnwindRecursion(self.n - 1)
 
-def get_response(env, kind, use_cache=True, replace_old=False, error_message=None,
-        prompt=">> ", default=None, make_pre_suggestions=lambda : []):
+
+def get_response(env,
+                 kind,
+                 use_cache=True,
+                 replace_old=False,
+                 error_message=None,
+                 prompt=">> ",
+                 default=None,
+                 make_pre_suggestions=lambda: []):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
     obs = "\n".join(lines)
     context = env.context
     suggester = context.suggesters[kind]
-    response = suggester.get_cached_response(obs) if (use_cache and not replace_old) else None
+    response = suggester.get_cached_response(obs) if (
+        use_cache and not replace_old) else None
     if response is None:
         t = context.terminal
         t.clear()
         for line in lines:
             t.print_line(line)
         if use_cache:
-            hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
+            hints, shortcuts = suggester.make_suggestions_and_shortcuts(env,
+                                                                        obs)
         else:
             hints, shortcuts = [], []
         if default is None:
@@ -342,13 +390,21 @@ def get_response(env, kind, use_cache=True, replace_old=False, error_message=Non
         if error_message is not None:
             t.print_line(error_message)
             t.print_line("")
-        response = term.get_input(t, suggestions=hints, shortcuts=shortcuts, prompt=prompt,
-                default=default, pre_suggestions=make_pre_suggestions())
+        response = term.get_input(t,
+                                  suggestions=hints,
+                                  shortcuts=shortcuts,
+                                  prompt=prompt,
+                                  default=default,
+                                  pre_suggestions=make_pre_suggestions())
         if use_cache:
             suggester.set_cached_response(obs, response)
     return response
 
-def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previous_cmd=None):
+
+def run_machine(state,
+                nominal_budget=float('inf'),
+                budget=float('inf'),
+                previous_cmd=None):
     """
     nominal budget: if this budget is exceded, raise a "Budget exhausted" error
     budget: if this budget is exceeded, interrupt execution because some parent has exhausted its nominal_budget
@@ -358,22 +414,29 @@ def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previou
     error_cmd = None
     budget_consumed = 0
     budget = min(budget, nominal_budget)
-    fixed = False 
+    fixed = False
     fixing_cmd = None
     command = state.parent_cmd if previous_cmd is None else previous_cmd
+
     def ret(m):
         if starting_state.parent_cmd != state.parent_cmd:
             raise ChangedContinuationError()
         return m, command, budget_consumed
+
     while True:
         if budget_consumed >= budget or budget_consumed > 1e5:
             exhausted = budget_consumed >= nominal_budget
-            command = commands.Interrupted(exhausted, command, budget_consumed=budget_consumed, state=state)
+            command = commands.Interrupted(exhausted,
+                                           command,
+                                           budget_consumed=budget_consumed,
+                                           state=state)
             return ret(command.make_message())
+
         def make_pre_suggestions():
             pre_suggestions = state.pre_suggestions()
             if error_cmd is not None: pre_suggestions.append(error_cmd.string)
             return pre_suggestions
+
         if error is None:
             error_message = None
         else:
@@ -381,9 +444,12 @@ def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previou
                 error_message = error
             else:
                 error_message = "{}: {}".format(error, error_cmd.string)
-        s = get_response(state, error_message=error_message,
-                use_cache=state.use_cache, prompt=state.prompt,
-                kind=state.kind, make_pre_suggestions=make_pre_suggestions)
+        s = get_response(state,
+                         error_message=error_message,
+                         use_cache=state.use_cache,
+                         prompt=state.prompt,
+                         kind=state.kind,
+                         make_pre_suggestions=make_pre_suggestions)
         command = commands.parse_command(s)
         command = command.copy(string=s, state=state)
         if fixing_cmd is not None and s == error_cmd.string:
@@ -406,7 +472,8 @@ def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previou
         else:
             try:
                 fixing_cmd = None
-                retval, state, command = command.execute(state, budget - budget_consumed)
+                retval, state, command = command.execute(
+                    state, budget - budget_consumed)
                 budget_consumed += command.budget_consumed
                 if retval is not None:
                     return ret(retval)
@@ -416,7 +483,7 @@ def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previou
                 error = str(e)
                 error_cmd = command
             except UnwindRecursion as e:
-                if e.unwound(): #reraise unless we've unwound all n steps of recursion
+                if e.unwound():  #reraise unless we've unwound all n steps of recursion
                     error = "Recursion error"
                     error_cmd = command
             except RecursionError:

@@ -5,15 +5,19 @@ import messages
 import worlds
 import main
 
+
 class BadCommand(Exception):
     """
     Raised when a command can't be executed
     """
+
     def __init__(self, explanation, **kwargs):
         super().__init__(**kwargs)
         self.explanation = explanation
+
     def __str__(self):
         return self.explanation
+
 
 class Command(utils.Copyable):
     """
@@ -47,11 +51,13 @@ class Command(utils.Copyable):
     def budget_consumed_for_more(self):
         return self.budget_consumed
 
+
 class Malformed(Command):
     """
     A command that is syntactically malformed (will typically result in an error)
     """
     pass
+
 
 def requires_register(f):
     """
@@ -59,14 +65,19 @@ def requires_register(f):
 
     If no registers are available, it will raise an error.
     """
+
     def decorated(command, env, budget):
         if len(env.registers) >= env.max_registers:
-            raise BadCommand("no free registers (use clear or replace instead)")
+            raise BadCommand(
+                "no free registers (use clear or replace instead)")
         return f(command, env, budget)
+
     return decorated
+
 
 class Interrupted(Command):
     command_args = ["exhausted", "previous"]
+
     def __init__(self, exhausted=True, previous=None, **kwargs):
         self.exhausted = exhausted
         self.previous = previous
@@ -76,9 +87,10 @@ class Interrupted(Command):
         s = "<<budget exhuasted>>" if self.exhausted else "<<interrupted>>"
         return Message(s)
 
+
 class Ask(Command):
 
-    command_args =["question", "nominal_budget", "result_cmd"]
+    command_args = ["question", "nominal_budget", "result_cmd"]
     def __init__(self, question, nominal_budget=None, result_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.question = question
@@ -90,7 +102,8 @@ class Ask(Command):
 
     @requires_register
     def execute(self, env, budget):
-        nominal_budget = env.default_child_budget() if self.nominal_budget is None else self.nominal_budget
+        nominal_budget = env.default_child_budget(
+        ) if self.nominal_budget is None else self.nominal_budget
         try:
             question = self.question.instantiate(env.args)
         except messages.BadInstantiation:
@@ -102,30 +115,38 @@ class Ask(Command):
             answer = builtin_response
         else:
             budget_consumed = env.cost_to_ask_Q
-            answerer = env.make_child(question, cmd=self, nominal_budget=nominal_budget)
-            answer, result_cmd, step_budget_consumed = main.run_machine(answerer,
-                    nominal_budget=nominal_budget-budget_consumed,
-                    budget=budget-budget_consumed
-                )
+            answerer = env.make_child(question,
+                                      cmd=self,
+                                      nominal_budget=nominal_budget)
+            answer, result_cmd, step_budget_consumed = main.run_machine(
+                answerer,
+                nominal_budget=nominal_budget - budget_consumed,
+                budget=budget - budget_consumed)
             budget_consumed += step_budget_consumed
         answer, env = env.contextualize(answer)
-        addressed_question = env.render_question(self.question, nominal_budget=nominal_budget)
+        addressed_question = env.render_question(self.question,
+                                                 nominal_budget=nominal_budget)
         addressed_answer = Message('A: ') + answer
         cmd = self.copy(result_cmd=result_cmd,
-                nominal_budget=nominal_budget,
-                budget_consumed=budget_consumed)
-        env = env.add_register(addressed_question, addressed_answer, cmd=cmd, contextualize=False)
+                        nominal_budget=nominal_budget,
+                        budget_consumed=budget_consumed)
+        env = env.add_register(addressed_question,
+                               addressed_answer,
+                               cmd=cmd,
+                               contextualize=False)
         return None, env, cmd
 
     def command_for_raise(self):
         return self if self.result_cmd is None else self.result_cmd
+
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in grid []?"):
         world = messages.get_world(Q.fields[0])
         if world is not None:
             grid, agent, history = world
-            return Message("the agent is in cell []", messages.CellMessage(agent))
+            return Message("the agent is in cell []",
+                           messages.CellMessage(agent))
     if Q.matches("what is in cell [] in grid []?"):
         cell = messages.get_cell(Q.fields[0])
         world = messages.get_world(Q.fields[1])
@@ -145,7 +166,8 @@ def builtin_handler(Q):
             if world is not None:
                 new_world, moved = worlds.move_person(world, direction)
                 if moved:
-                    return Message("the resulting grid is []", messages.WorldMessage(new_world))
+                    return Message("the resulting grid is []",
+                                   messages.WorldMessage(new_world))
                 else:
                     return Message("it can't move that direction")
         if Q.matches("what cell is directly {} of cell []?".format(direction)):
@@ -153,17 +175,20 @@ def builtin_handler(Q):
             if cell is not None:
                 new_cell, moved = cell.move(direction)
                 if moved:
-                    return Message("the cell []", messages.CellMessage(new_cell))
+                    return Message("the cell []",
+                                   messages.CellMessage(new_cell))
                 else:
                     return Message("there is no cell there")
     return None
 
+
 class View(Command):
 
     command_args = ["n"]
+
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
-        self.n = n 
+        self.n = n
 
     def execute(self, env, budget):
         n = self.n
@@ -173,9 +198,11 @@ class View(Command):
         env = env.replace_arg(n, new_m, cmd=self)
         return None, env, self
 
+
 class Say(Command):
 
     command_args = ["message"]
+
     def __init__(self, message, **kwargs):
         super().__init__(**kwargs)
         self.message = message
@@ -191,9 +218,11 @@ class Say(Command):
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
+
 class Clear(Command):
 
     command_args = ["n"]
+
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -204,6 +233,7 @@ class Clear(Command):
     def execute(self, env, budget):
         return None, clear(self.n, env), self
 
+
 def clear(n, env):
     if n == 0:
         raise BadCommand("can't remove register 0")
@@ -211,9 +241,11 @@ def clear(n, env):
         raise BadCommand("invalid index")
     return env.delete_register(n)
 
+
 class Replace(Command):
 
     command_args = ["ns", "message"]
+
     def __init__(self, ns, message, **kwargs):
         super().__init__(**kwargs)
         self.ns = ns
@@ -235,6 +267,7 @@ class Replace(Command):
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
+
 class Assert(Command):
 
     command_args = ["assertion", "error_cmd", "result_cmd", "failed"]
@@ -250,20 +283,33 @@ class Assert(Command):
         if not isinstance(register.cmd, Raise):
             if not isinstance(register.cmd, Assert) or register.cmd.failed:
                 raise BadCommand("can only assert after a raise")
-        assertion = Message("T[rue] or F[alse] (can give explanation for F) -- ") + self.assertion.instantiate(env.args)
-        state = env.delete_register(len(env.registers)-1)
-        answerer = state.make_child(assertion, cmd=self, nominal_budget=state.nominal_budget)
-        answer, result_cmd, budget_consumed = main.run_machine(answerer, state.nominal_budget, budget)
-        cmd = self.copy(error_cmd=register.cmd, budget_consumed=budget_consumed, result_cmd=result_cmd)
+        assertion = Message(
+            "T[rue] or F[alse] (can give explanation for F) -- ") + self.assertion.instantiate(
+                env.args)
+        state = env.delete_register(len(env.registers) - 1)
+        answerer = state.make_child(assertion,
+                                    cmd=self,
+                                    nominal_budget=state.nominal_budget)
+        answer, result_cmd, budget_consumed = main.run_machine(
+            answerer, state.nominal_budget, budget)
+        cmd = self.copy(error_cmd=register.cmd,
+                        budget_consumed=budget_consumed,
+                        result_cmd=result_cmd)
         if answer.matches("T") or answer.matches("t"):
-            new_contents = register.contents + (Message("Checked: ") + self.assertion,)
-            state = state.add_register(*new_contents, contextualize=False, cmd=cmd)
+            new_contents = register.contents + (Message("Checked: ") +
+                                                self.assertion, )
+            state = state.add_register(*
+                                       new_contents,
+                                       contextualize=False,
+                                       cmd=cmd)
         else:
             cmd = cmd.copy(failed=True)
             answer, state = state.contextualize(answer)
             state = state.add_register(
-                    Message("Assert: ") + self.assertion,
-                    Message("A: ") + answer, cmd=cmd, contextualize=False)
+                Message("Assert: ") + self.assertion,
+                Message("A: ") + answer,
+                cmd=cmd,
+                contextualize=False)
         return None, state, cmd
 
     def command_for_raise(self):
@@ -278,9 +324,11 @@ class Assert(Command):
         else:
             return self
 
+
 class Reply(Command):
 
     command_args = ["message", "result_cmd"]
+
     def __init__(self, message, result_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.message = message
@@ -298,7 +346,8 @@ class Reply(Command):
         env = env.copy(parent_cmd=cmd)
         addressed_answer = Message("A: ") + self.message
         addressed_followup = Message("Q: ") + followup
-        new_contents = env.registers[0].contents + (addressed_answer, addressed_followup)
+        new_contents = env.registers[0].contents + (addressed_answer,
+                                                    addressed_followup)
         env = env.add_register(*new_contents,
                 contextualize=False, cmd=self.copy(result_cmd=cmd), replace=True, n=0)
         return env
@@ -306,9 +355,11 @@ class Reply(Command):
     def command_for_raise(self):
         return self if self.result_cmd is None else self.result_cmd
 
+
 class Raise(Command):
 
     command_args = ["n", "message", "old_cmd"]
+
     def __init__(self, n, message, old_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -334,16 +385,20 @@ class Raise(Command):
     def command_for_fix(self):
         return self if self.old_cmd is None else self.old_cmd
 
+
 class Fix(Command):
 
     command_args = ["n"]
+
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
         self.n = n
 
+
 class Resume(Command):
 
-    command_args = ["n", "message", "nominal_budget", "question", "result_cmd", "previous"]
+    command_args = ["n", "message", "nominal_budget", "question", "result_cmd",
+                    "previous"]
     def __init__(self, n, message, nominal_budget=None, question=None, result_cmd=None, previous=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -373,28 +428,37 @@ class Resume(Command):
             raise BadCommand("invalid reference")
         new_env = result_cmd.followup(result_cmd.state, followup, self)
         old_budget_consumed = register.cmd.budget_consumed_for_more()
-        result, resume_result_cmd, budget_consumed = main.run_machine(new_env,
-                nominal_budget=resume_budget - old_budget_consumed,
-                budget=budget,
-            )
+        result, resume_result_cmd, budget_consumed = main.run_machine(
+            new_env,
+            nominal_budget=resume_budget - old_budget_consumed,
+            budget=budget, )
         result, env = env.contextualize(result)
         addressed_question = Message("Q: ") + self.message
         addressed_answer = Message("A: ") + result
         old_contents = register.contents
         new_contents = old_contents + (addressed_question, addressed_answer)
-        cmd = self.copy(nominal_budget=resume_budget, question=resume_question,
-                result_cmd=resume_result_cmd, budget_consumed=budget_consumed, previous=register.cmd)
-        env = env.add_register(*new_contents, cmd=cmd, contextualize=False, n=self.n, replace=True)
+        cmd = self.copy(nominal_budget=resume_budget,
+                        question=resume_question,
+                        result_cmd=resume_result_cmd,
+                        budget_consumed=budget_consumed,
+                        previous=register.cmd)
+        env = env.add_register(*
+                               new_contents,
+                               cmd=cmd,
+                               contextualize=False,
+                               n=self.n,
+                               replace=True)
         return None, env, cmd
 
     def command_for_raise(self):
         return self if self.result_cmd is None else self.result_cmd
-    
+
     def budget_consumed_for_more(self):
         result = self.budget_consumed
         if self.previous is not None:
             result += self.previous.budget_consumed_for_more()
         return result
+
 
 class More(Command):
 
@@ -423,39 +487,56 @@ class More(Command):
         if result_cmd.exhausted:
             more_budget *= 10
         new_env = result_cmd.state
-        new_head = new_env.make_head(more_question, more_budget).copy(fields=new_env.registers[0].contents[0].fields)
-        new_first_register = (new_head,) + new_env.registers[0].contents[1:]
-        new_env = new_env.add_register(*new_first_register, cmd=self, replace=True, n=0, contextualize=False).copy(parent_cmd=self)
+        new_head = new_env.make_head(more_question, more_budget).copy(
+            fields=new_env.registers[0].contents[0].fields)
+        new_first_register = (new_head, ) + new_env.registers[0].contents[1:]
+        new_env = new_env.add_register(*
+                                       new_first_register,
+                                       cmd=self,
+                                       replace=True,
+                                       n=0,
+                                       contextualize=False).copy(
+                                           parent_cmd=self)
         budget = min(budget, more_budget)
         budget_consumed = 0
         previous_cmd = None
-        if (hasattr(result_cmd.previous, "result_cmd") and 
+        if (hasattr(result_cmd.previous, "result_cmd") and
                 isinstance(result_cmd.previous.result_cmd, Interrupted)):
-            if ((not result_cmd.previous.result_cmd.exhausted and not result_cmd.exhausted) or
+            if ((not result_cmd.previous.result_cmd.exhausted and
+                 not result_cmd.exhausted) or
                     isinstance(new_env, main.Translator)):
                 if isinstance(result_cmd.previous, Ask):
                     new_n = len(new_env.registers) - 1
-                elif isinstance(result_cmd.previous, More) or isinstance(result_cmd.previous, Resume):
+                elif isinstance(result_cmd.previous, More) or isinstance(
+                        result_cmd.previous, Resume):
                     new_n = result_cmd.previous.n
                 else:
-                    raise ValueError("didn't know that this could be interrupted")
-                recursive_cmd_string = "<<recursively applied more {}>>".format(new_n)
-                recursive_more_cmd = self.copy(n=new_n, state=new_env, string=recursive_cmd_string)
-                _, new_env, recursive_more_cmd = recursive_more_cmd.execute(new_env, budget)
+                    raise ValueError(
+                        "didn't know that this could be interrupted")
+                recursive_cmd_string = "<<recursively applied more {}>>".format(
+                    new_n)
+                recursive_more_cmd = self.copy(n=new_n,
+                                               state=new_env,
+                                               string=recursive_cmd_string)
+                _, new_env, recursive_more_cmd = recursive_more_cmd.execute(
+                    new_env, budget)
                 previous_cmd = recursive_more_cmd
                 budget_consumed += recursive_more_cmd.budget_consumed
-        result, more_result_cmd, step_budget_consumed = main.run_machine(new_env,
-                nominal_budget=more_budget - budget_consumed,
-                budget=budget - budget_consumed, 
-                previous_cmd=previous_cmd
-            )
+        result, more_result_cmd, step_budget_consumed = main.run_machine(
+            new_env,
+            nominal_budget=more_budget - budget_consumed,
+            budget=budget - budget_consumed,
+            previous_cmd=previous_cmd)
         budget_consumed += step_budget_consumed
         result, env = env.contextualize(result)
         addressed_answer = Message('A: ') + result
-        more_cmd = self.copy(nominal_budget=more_budget, question=more_question,
-                result_cmd=more_result_cmd, budget_consumed=budget_consumed)
+        more_cmd = self.copy(nominal_budget=more_budget,
+                             question=more_question,
+                             result_cmd=more_result_cmd,
+                             budget_consumed=budget_consumed)
         new_addressed_q = env.render_question(more_question, more_budget)
-        new_contents = (new_addressed_q,) + register.contents[1:-1] + (addressed_answer,)
+        new_contents = (new_addressed_q, ) + register.contents[1:-1] + (
+            addressed_answer, )
         env = env.add_register(*new_contents,
                 cmd=more_cmd, replace=True, n = self.n, contextualize=False)
         return None, env, more_cmd
@@ -464,10 +545,12 @@ class More(Command):
         if self.result_cmd is not None:
             return self.result_cmd
         return self
-    
-#----parsing
+
+    #----parsing
+
 
 parse_cache = {}
+
 
 def parse(t, string):
     if (t, string) not in parse_cache:
@@ -477,89 +560,106 @@ def parse(t, string):
             parse_cache[(t, string)] = Malformed()
     return parse_cache[(t, string)]
 
+
 def parse_reply(s):
     return parse(reply_command, s)
+
 
 def parse_command(s):
     return parse(command, s)
 
+
 def parse_message(s):
     return parse(message, s)
+
 
 def parse_view(s):
     return parse(view_command, s)
 
+
 def parse_fix(s):
     return parse(fix_command, s)
 
+
 def raw(s):
     return pp.Literal(s).suppress()
+
+
 def options(*xs):
     result = pp.Literal(xs[0])
     for x in xs[1:]:
         result = result ^ pp.Literal(x)
     return result
-w = pp.Empty() # optional whitespace
 
-number = pp.Word("0123456789").setParseAction(lambda t : int(t[0]))
-power_of_ten = (pp.Literal("1") + pp.Word("0")).setParseAction(lambda t : int(t[0] + t[1]))
+
+w = pp.Empty()  # optional whitespace
+
+number = pp.Word("0123456789").setParseAction(lambda t: int(t[0]))
+power_of_ten = (
+    pp.Literal("1") + pp.Word("0")).setParseAction(lambda t: int(t[0] + t[1]))
 prose = pp.Word(" ,!?+-/*.;:_<>=&%{}[]\'\"" + pp.alphas).leaveWhitespace()
 
 message_pointer = (raw("#") + number).leaveWhitespace()
-message_pointer.setParseAction(lambda x : Pointer(x[0]))
+message_pointer.setParseAction(lambda x: Pointer(x[0]))
+
 
 def message_action(xs):
     text, fields = utils.unweave(xs)
-    if text == ("",):
+    if text == ("", ):
         raise pp.ParseException("can't parse empty message")
     return Message(text=text, fields=fields)
+
 
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
 argument = submessage | message_pointer
 literal_message = (
-        pp.Optional(prose, default="") +
-        pp.ZeroOrMore(argument + pp.Optional(prose, default=""))
-    ).setParseAction(message_action)
+    pp.Optional(prose,
+                default="") + pp.ZeroOrMore(argument + pp.Optional(prose,
+                                                                   default=""))
+).setParseAction(message_action)
 message << literal_message
 
 budget_modifier = power_of_ten + w
-budget_modifier.setParseAction(lambda xs : ("nominal_budget", xs[0]))
+budget_modifier.setParseAction(lambda xs: ("nominal_budget", xs[0]))
 
 ask_modifiers = pp.Optional(budget_modifier)
-ask_modifiers.setParseAction(lambda xs : dict(list(xs)))
+ask_modifiers.setParseAction(lambda xs: dict(list(xs)))
 
 ask_command = (raw("ask") | raw("Q:") | raw("Q")) + ask_modifiers + w + message
-ask_command.setParseAction(lambda xs : Ask(xs[1], **xs[0]))
+ask_command.setParseAction(lambda xs: Ask(xs[1], **xs[0]))
 
-reply_command = (raw("reply") | raw("A:") | raw("A") | raw("return")) + w + message
-reply_command.setParseAction(lambda xs : Reply(xs[0]))
+reply_command = (raw("reply") | raw("A:") | raw("A") |
+                 raw("return")) + w + message
+reply_command.setParseAction(lambda xs: Reply(xs[0]))
 
 clear_command = (raw("clear")) + w + number
-clear_command.setParseAction(lambda xs : Clear(xs[0]))
+clear_command.setParseAction(lambda xs: Clear(xs[0]))
 
-replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(w + raw("and")) + w + number) + pp.Optional(w + raw("with")) + w + message
-replace_command.setParseAction(lambda xs : Replace(xs[:-1], xs[-1]))
+replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(
+    w + raw("and")) + w + number) + pp.Optional(w + raw("with")) + w + message
+replace_command.setParseAction(lambda xs: Replace(xs[:-1], xs[-1]))
 
 say_command = (raw("say") | raw("state")) + w + message
-say_command.setParseAction(lambda xs : Say(xs[0]))
+say_command.setParseAction(lambda xs: Say(xs[0]))
 
 view_command = raw("view") + w + number
-view_command.setParseAction(lambda xs : View(xs[0]))
+view_command.setParseAction(lambda xs: View(xs[0]))
 
 raise_command = raw("raise") + w + number + w + message
-raise_command.setParseAction(lambda xs : Raise(xs[0], xs[1]))
+raise_command.setParseAction(lambda xs: Raise(xs[0], xs[1]))
 
 fix_command = raw("fix") + w + number
-fix_command.setParseAction(lambda xs : Fix(xs[0]))
+fix_command.setParseAction(lambda xs: Fix(xs[0]))
 
-resume_command = (raw("resume") | raw("ask@") | raw("reply")) + w + number + w + message
-resume_command.setParseAction(lambda xs : Resume(xs[0], xs[1]))
+resume_command = (raw("resume") | raw("ask@") |
+                  raw("reply")) + w + number + w + message
+resume_command.setParseAction(lambda xs: Resume(xs[0], xs[1]))
 
 more_command = raw("more") + w + number
-more_command.setParseAction(lambda xs : More(xs[0]))
+more_command.setParseAction(lambda xs: More(xs[0]))
 
 assert_command = raw("assert") + w + message
-assert_command.setParseAction(lambda xs : Assert(xs[0]))
+assert_command.setParseAction(lambda xs: Assert(xs[0]))
 
 command = ask_command | reply_command | say_command | view_command | clear_command | replace_command | raise_command | fix_command | more_command | resume_command | assert_command

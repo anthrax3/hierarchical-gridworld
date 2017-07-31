@@ -1,6 +1,7 @@
 def areinstances(xs, t):
     return isinstance(xs, tuple) and all(isinstance(x, t) for x in xs)
 
+
 def interleave(*xss):
     result = []
     indices = [0 for xs in xss]
@@ -15,26 +16,33 @@ def interleave(*xss):
     assert indices == lens
     return result
 
+
 def unweave(xs):
     result = ([], [])
     for i, x in enumerate(xs):
-        result[i%2].append(x)
+        result[i % 2].append(x)
     return tuple(result[0]), tuple(result[1])
+
 
 def clear_screen():
     print("\x1b[2J\x1b[H")
 
+
 def elicit_input(observations, actions):
     clear_screen()
-    lines = interleave(observations, [">>> {}".format(action) for action in actions])
+    lines = interleave(observations, [">>> {}".format(action)
+                                      for action in actions])
     print("\n\n".join(lines))
     return raw_input("\n>>> ")
+
 
 def starts_with(p, s):
     return len(s) >= len(p) and s[:len(p)] == p
 
+
 def pad_to(s, k):
     return s + " " * (k - len(s))
+
 
 def matched_paren(s, k):
     delim = s[k]
@@ -58,6 +66,7 @@ def matched_paren(s, k):
         k += d
         if k < 0 or k >= len(s):
             return None
+
 
 class Copyable(object):
     def copy(self, **kwargs):
