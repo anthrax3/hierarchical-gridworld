@@ -58,7 +58,7 @@ class Suggester(object):
         cache = self.cache
         shortcuts = []
         def add_shortcut(m):
-            h = m.format(["#"] * m.size)
+            h = m.format_with(["#"] * m.size)
             if useful_shortcut(h) and len(shortcuts) < num_shortcuts and h not in shortcuts:
                 shortcuts.append(h)
         def useful_shortcut(h):

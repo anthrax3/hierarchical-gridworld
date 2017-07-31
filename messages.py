@@ -1,8 +1,7 @@
-from utils import areinstances, interleave, unweave
+import utils
 import six
 
-class Referent(object):
-
+class Referent(utils.Copyable):
     def instantiate(self, xs):
         raise NotImplemented()
 
@@ -14,25 +13,21 @@ class Message(Referent):
     A Message consists of text interspersed with Referents
     """
 
-    def __init__(self, text, args=(), pending=False):
+    arg_names = ["text", "fields", "pending"]
+
+    def __init__(self, text, *positional_fields, fields=(), pending=False):
         if isinstance(text, six.string_types):
             text = tuple(text.split("[]"))
-        if isinstance(args, Referent):
-            args = (args,)
         self.text = text
-        self.args = args 
-        self.pending = pending
+        self.fields = fields or positional_fields #can either give fields as positional args, or fields=tuple
+        assert positional_fields == () or fields == () #but can't do both
+        self.pending = pending #if pending, fields will be finalized later
         if not pending:
             assert self.well_formed()
 
-    def copy(self, **kwargs):
-        for k in ["text", 'args', "pending"]:
-            if k not in kwargs: kwargs[k] = self.__dict__[k]
-        return Message(**kwargs)
-
-    def finalize_args(self, args):
+    def finalize_fields(self, fields):
         assert self.pending
-        self.args = args
+        self.fields = fields
         self.pending = False
         assert self.well_formed()
 
@@ -42,63 +37,75 @@ class Message(Referent):
 
     def well_formed(self):
         return (
-            areinstances(self.text, six.string_types) and
-            areinstances(self.args, Referent) and
-            len(self.text) == len(self.args) + 1
+            utils.areinstances(self.text, six.string_types) and
+            utils.areinstances(self.fields, Referent) and
+            len(self.text) == len(self.fields) + 1
         )
 
     @property
     def size(self):
-        return len(self.args)
+        return len(self.fields)
 
     def __add__(self, other):
         joined = self.text[-1] + other.text[0]
-        return Message(self.text[:-1] + (joined,) + other.text[1:], self.args + other.args)
+        return Message(
+                text=self.text[:-1] + (joined,) + other.text[1:],
+                fields=self.fields + other.fields
+        )
 
-    def format(self, names):
-        return "".join(interleave(self.text, names))
+    def format_with(self, field_strings):
+        return "".join(utils.interleave(self.text, field_strings))
 
-    def format_with_indices(self, indices):
-        return self.format(["#{}".format(index) for index in indices])
 
     def __str__(self):
-        def f(arg):
-            return "({})".format(arg) if isinstance(arg, Message) else str(arg)
-        return self.format([f(arg) for arg in self.args])
+        def f(field):
+            return "({})".format(field) if isinstance(field, Message) else str(field)
+        return self.format_with([f(field) for field in self.fields])
 
-    def instantiate(self, xs):
-        return self.transform_args_recursive(lambda arg : arg.instantiate(xs))
+    def instantiate(self, args):
+        """
+        Instantiate all pointers by indexing into the list args.
+        """
+        return self.transform_fields_recursive(lambda field : field.instantiate(args))
 
-    def transform_args_recursive(self, f, cache=None):
+    def transform_fields_recursive(self, f, cache=None):
         if cache is None: cache = {}
         if self in cache: return cache[self]
         result = Message(self.text, pending=True)
         cache[self] = result
         def sub(a):
             if isinstance(a, Message):
-                return a.transform_args_recursive(f, cache=cache)
+                return a.transform_fields_recursive(f, cache=cache)
             else:
                 return f(a)
-        result.finalize_args(tuple(sub(a) for a in self.args))
+        result.finalize_fields(tuple(sub(a) for a in self.fields))
         return result
 
-    def transform_args(self, f):
-        return Message(self.text, tuple(f(a) for a in self.args))
+    def transform_fields(self, f):
+        #don't use copy because subclasses should still create Messages
+        return Message(text=self.text, fields=tuple(f(a) for a in self.fields))
 
-    def get_leaf_arguments(m, seen=None):
+    def get_leaves(m, seen=None):
         if seen is None: seen = set()
         seen.add(m)
-        for arg in m.args:
-            if isinstance(arg, Message):
-                yield from arg.get_leaf_arguments(seen)
+        for field in m.fields:
+            if isinstance(field, Message):
+                yield from field.get_leaves(seen)
             else:
-                yield arg
+                yield field
 
 class WorldMessage(Message):
+    """
+    A message representing a world.
 
+    It provides some self-referential text, so that it remains
+    usable if you view it.
+    """
+
+    arg_names = ["world"]
     def __init__(self, world):
         self.world = world
-        self.args = (self,)
+        self.fields = (self,)
         self.text = ("the gridworld grid ", "")
 
     def __str__(self):
@@ -108,14 +115,21 @@ def get_world(m):
     if isinstance(m, WorldMessage):
         return m.world
     if m.matches("the gridworld grid []"):
-        return get_world(m.args[0])
+        return get_world(m.fields[0])
     return None
 
 class CellMessage(Message):
+    """
+    A message representing a cell.
 
+    It provides some self-referential text, so that it remains
+    usable if you view it.
+    """
+
+    arg_names = ["cell"]
     def __init__(self, cell):
         self.cell = cell
-        self.args = (self,)
+        self.fields = (self,)
         self.text = ("the gridworld cell ", "")
 
     def __str__(self):
@@ -125,7 +139,7 @@ def get_cell(m):
     if isinstance(m, CellMessage):
         return m.cell
     if m.matches("the gridworld cell []"):
-        return get_cell(m.args[0])
+        return get_cell(m.fields[0])
     return None
 
 def addressed_message(message, implementer, translator, question=False, budget=float('inf')):
@@ -142,10 +156,10 @@ def address_question(Q):
 def strip_prefix(message, sep=": "):
     for i, t in enumerate(message.text):
         if sep in t:
-            new_args = message.args[i:]
+            new_fields = message.fields[i:]
             new_t = sep.join(t.split(sep)[1:])
             new_text = (new_t,) + message.text[i+1:]
-            return Message(new_text, new_args)
+            return Message(text=new_text, fields=new_fields)
     return message
 
 def submessages(ref, include_root=True, seen=None):
@@ -154,28 +168,14 @@ def submessages(ref, include_root=True, seen=None):
         if include_root:
             seen.add(ref)
             yield ref
-        for arg in ref.args:
-            yield from submessages(arg, seen=seen)
-
-class RegisterReference(Referent):
-    """
-    A reference to a register, that will shift as registers are added or deleted
-    """
-
-    def __init__(self, n):
-        self.n = n
-
-    def __str__(self):
-        return "@{}".format("?" if self.n is None else self.n)
-
-    def instantiate(self, xs):
-        return self
+        for field in ref.fields:
+            yield from submessages(field, seen=seen)
 
 class Pointer(Referent):
     """
-    A Pointer is an integer, that indexes into a list of arguments
+    A Pointer is an integer that indexes into a list of arguments
     """
-
+    arg_names = ["n"]
     def __init__(self, n):
         self.n = n
         assert self.well_formed()

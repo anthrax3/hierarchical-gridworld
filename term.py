@@ -15,6 +15,14 @@ shortcut_bindings = [
 ]
 
 def get_input(t, suggestions=[], shortcuts=[], prompt=None, **kwargs):
+    """
+    Prompt the user for input
+
+    t: the Terminal to use for collecting input
+    suggestions: defaults the user can select by pressing <down>
+    shortcuts: templates the user can insert by ctrl+<key>
+    """
+
     shortcut_dict = {}
     for (c, k), template in zip(shortcut_bindings, shortcuts):
         shortcut_dict[k] = template

@@ -1,6 +1,6 @@
 import utils
 from collections import namedtuple
-from messages import Message, Pointer, RegisterReference
+from messages import Message, Pointer
 import messages
 import commands
 import term
@@ -8,37 +8,24 @@ import suggestions
 from copy import copy
 from math import log
 
-class Register(object):
-    def __init__(self, contents, cmd=None):
-        self.contents = contents
-        self.cmd = cmd
-
-    def copy(self, **kwargs):
-        for k in ["contents", "cmd"]:
-            if k not in kwargs: kwargs[k] = self.__dict__[k]
-        return self.__class__(**kwargs)
-
-    def transform_contents(self, f):
-        return self.copy(contents=tuple(f(x) for x in self.contents))
-
-class FixedError(Exception):
-    pass
-
-class RegisterMachine(object):
-    max_registers = 7
-    initial_budget_consumption = 1
-    kind = "implement"
-    prompt = ">> "
-    help_message = """Valid commands:
+help_message = """Valid commands:
 
 "ask <question>", e.g. "ask what is one plus one?"
     optionally ask10, ask100, ask1000... to specify budget
 "reply <answer>", e.g. "reply it is two"
+    end the current computation and return an answer
+"view n", e.g. "view 0"
+    expand the pointer #n
+"more n", e.g. "more 2"
+    give an interrupted computation more time
+"clear n", e.g. "clear 3"
+    remove the contents of register 3
 "say <message>, e.g. "say #1 is south of #2"
-"view n", e.g. "view 0", expand the pointer #n
-"clear n", e.g. "clear 3", remove the contents of register 3
-"replace n [and m and...] with <message>"
-    == clear n && [clear m && ...] say <message>
+    add a message to a new register
+"replace n [m ....] <message>"
+    == clear n [&& clear m ...] && say <message>
+"resume n <followup>", e.g. "reply 2 don't include zero"
+    resume a computation with a follow-up message
 
 Valid messages: text interspersed with pointers,
 such as "#1", or with sub-messages enclosed in parentheses,
@@ -52,6 +39,35 @@ ask move the agent n/e/s/w in grid #n?
 ask what cell is directly n/e/s/w of cell #m?
 ask is cell #n n/e/s/w of cell #m?"""
 
+class Register(utils.Copyable):
+    """
+    A register stores a series of messages,
+    along with the command that most recently modified the register.
+    """
+
+    arg_names = ["contents", "cmd"]
+    def __init__(self, contents, cmd=None):
+        self.contents = contents
+        self.cmd = cmd
+
+    def transform_contents(self, f):
+        return self.copy(contents=tuple(f(x) for x in self.contents))
+
+class RegisterMachine(utils.Copyable):
+    """
+    A registser machine maintains a few registers,
+    and accepts commands that modify the state of those registers.
+    It also maintains a list of message `arguments',
+    which registers and commands can reference using pointers.
+    """
+
+    max_registers = 7                   # if all 7 registers are full, can't make new ones
+    cost_to_ask_Q = 0                   # asking questions is free, you pay when they are translated
+    kind = "implement"                  # used to choose which suggestions to show
+    prompt = ">> "
+
+    arg_names = ["registers", "context", "args", "use_cache", "nominal_budget", "parent_cmd"]
+
     def __init__(self, registers=(), args=(), context=None, use_cache=True, nominal_budget=float('inf'), parent_cmd=None):
         self.registers = registers
         self.args = args
@@ -60,83 +76,8 @@ ask is cell #n n/e/s/w of cell #m?"""
         self.parent_cmd = parent_cmd
         self.nominal_budget = nominal_budget
 
-    def copy(self, **kwargs):
-        for s in ["registers", "context", "args", "use_cache", "nominal_budget", "parent_cmd"]:
-            if s not in kwargs: kwargs[s] = self.__dict__[s]
-        return self.__class__(**kwargs)
-
     def __str__(self):
         return '\n'.join(self.get_lines())
-
-    def run(self, nominal_budget=float('inf'), budget=float('inf'), previous_cmd=None):
-        state = self
-        error = None
-        error_cmd = None
-        budget_consumed = self.initial_budget_consumption
-        budget = min(budget, nominal_budget)
-        fixed = False 
-        fixing_cmd = None
-        command = self.parent_cmd if previous_cmd is None else previous_cmd
-        def ret(m):
-            if self.parent_cmd != state.parent_cmd:
-                raise FixedError()
-            return m, command, budget_consumed
-        while True:
-            if budget_consumed >= budget or budget_consumed > 1e5:
-                exhausted = budget_consumed >= nominal_budget
-                command = commands.Interrupted(exhausted, command, budget_consumed=budget_consumed, state=state)
-                return ret(command.make_message())
-            def make_pre_suggestions():
-                pre_suggestions = state.pre_suggestions()
-                if error_cmd is not None: pre_suggestions.append(error_cmd.string)
-                return pre_suggestions
-            if error is None:
-                error_message = None
-            else:
-                if error_cmd is None:
-                    error_message = error
-                else:
-                    error_message = "{}: {}".format(error, error_cmd.string)
-            s = get_response(state, error_message=error_message,
-                    use_cache=state.use_cache, prompt=state.prompt,
-                    kind=state.kind, make_pre_suggestions=make_pre_suggestions)
-            command = commands.parse_command(s)
-            command = command.copy(string=s, state=state)
-            if fixing_cmd is not None and s == error_cmd.string:
-                error = "nothing was fixed"
-                error_cmd = fixing_cmd
-                state = fixing_cmd.state
-                fixing_cmd = None
-            elif s == "help":
-                error = state.help_message
-                error_cmd = None
-            elif isinstance(command, commands.Malformed):
-                error = "syntax error"
-                error_cmd = command
-            elif isinstance(command, commands.Fix):
-                error_cmd = state.registers[command.n].cmd.command_for_fix()
-                error = "previously"
-                fixing_cmd = command
-                state = error_cmd.state
-                fixed = True
-            else:
-                try:
-                    fixing_cmd = None
-                    retval, state, command = command.execute(state, budget - budget_consumed)
-                    budget_consumed += command.budget_consumed
-                    if retval is not None:
-                        return ret(retval)
-                    error = None
-                    error_cmd = None
-                except commands.BadCommand as e:
-                    error = str(e)
-                    error_cmd = command
-                except UnwindRecursion as e:
-                    if e.unwound(): #reraise unless we've unwound all n steps of recursion
-                        error = "Recursion error"
-                        error_cmd = command
-                except RecursionError:
-                    raise UnwindRecursion(30)
 
     def dump_and_print(self, message=""):
         if self.context.terminal.closed:
@@ -151,22 +92,36 @@ ask is cell #n n/e/s/w of cell #m?"""
             term.get_input(self.context.terminal)
 
     def contextualize(self, m):
+        """
+        Add each of m's arguments to the machine argument list,
+        and then replace each of m's arguments with a pointer.
+        """
         new_env_args = self.args
-        def sub(arg):
+        def sub(field):
             nonlocal new_env_args
-            if isinstance(arg, Message):
-                new_env_args = new_env_args + (arg,)
+            if isinstance(field, Message):
+                new_env_args = new_env_args + (field,)
                 return Pointer(len(new_env_args) - 1)
             else:
-                return arg
-        return m.transform_args(sub), self.copy(args=new_env_args)
+                return field
+        return m.transform_fields(sub), self.copy(args=new_env_args)
 
-    def transform_register_args(self, f):
+    def transform_register_fields(self, f):
+        """
+        Apply f to every argument of every message in every register.
+        """
         def g(m):
-            return m.transform_args_recursive(f)
+            return m.transform_fields_recursive(f)
         return self.copy(registers = tuple(r.transform_contents(g) for r in self.registers))
 
     def add_register(self, *contents, n=None, contextualize=True, replace=False, **kwargs):
+        """
+        Add a new register, containing contents.
+        n: the position to add it.
+        replace: whether to replace the old register in position n, or insert it into the list
+        contextualize: whether to call self.contextualize() on each argument
+        **kwargs: get passed on to the register
+        """
         state = self
         if n is None:
             n = len(state.registers)
@@ -188,27 +143,20 @@ ask is cell #n n/e/s/w of cell #m?"""
                 if (not replace) and new_n >= n:
                     new_n += 1
                 return RegisterReference(new_n)
-        state = state.transform_register_args(sub)
+        state = state.transform_register_fields(sub)
         if replace: state = state.pack_args()
         return state
 
     def delete_register(self, n):
-        def sub(x):
-            if isinstance(x, RegisterReference):
-                if n < x.n:
-                    return RegisterReference(x.n - 1)
-                elif n == x.n:
-                    return RegisterReference(None)
-                elif n > x.n:
-                    return x
-            else:
-                return x
-        result = self.copy(registers = self.registers[:n] + self.registers[n+1:])
-        result = result.transform_register_args(sub)
-        result = result.pack_args()
-        return result
+        """
+        Delete the register n, then remove all unused arguments
+        """
+        return self.copy(registers = self.registers[:n] + self.registers[n+1:]).pack_args()
     
     def get_lines(self):
+        """
+        Get a sequence of lines that represent the current state of the register machine.
+        """
         result = []
         for i, r in enumerate(self.registers):
             prefix = "{}. ".format(i)
@@ -219,38 +167,31 @@ ask is cell #n n/e/s/w of cell #m?"""
         return result
 
     def replace_arg(self, n, new_m, cmd=None):
+        """
+        Replace each pointer to argument n with new_m, then remove argument n
+        """
+        def affected(m):
+            return isinstance(m, Pointer) and m.n == n
         def sub(m):
-            if isinstance(m, tuple):
-                results = [sub(c) for c in m]
-                return tuple(a for a, b in results), any(b for a, b in results)
-            elif isinstance(m, Register):
-                new_contents, changed = sub(m.contents)
-                kwargs = {"cmd":cmd} if cmd is not None and changed else {}
-                return m.copy(contents=new_contents, **kwargs), changed
-            elif isinstance(m, Pointer):
-                if m.n < n:
-                    return m, False
-                elif m.n == n:
-                    return sub(new_m)[0], True
-                elif m.n > n:
-                    return Pointer(m.n - 1), False
-            elif isinstance(m, Message):
-                def inner_sub(arg):
-                    result, changed = sub(arg)
-                    inner_sub.any_changed = changed or inner_sub.any_changed
-                    return result
-                inner_sub.any_changed = False
-                return m.transform_args_recursive(inner_sub), inner_sub.any_changed
-            return m
-        new_args = self.args[:n] + self.args[n+1:]
-        return self.copy(registers=sub(self.registers)[0], args=new_args)
+            return new_m if affected(m) else m
+        def transform_register(r):
+            any_affected = False
+            for m in r.contents:
+                any_affected = any_affected or any(affected(l) for l in m.get_leaves())
+            return r.copy(cmd=cmd) if any_affected and cmd is not None else r
+        result = self.copy(registers=tuple(transform_register(r) for r in self.registers))
+        return result.transform_register_fields(sub).pack_args()
 
     def pack_args(self):
+        """
+        Remove unused arguments,
+        and renumber arguments based on first appearance.
+        """
         arg_order = {}
         new_args = []
         for register in self.registers:
             for message in register.contents:
-                for x in message.get_leaf_arguments():
+                for x in message.get_leaves():
                     if isinstance(x, Pointer) and x.n not in arg_order:
                         arg_order[x.n] = len(arg_order)
                         new_args.append(self.args[x.n])
@@ -260,27 +201,40 @@ ask is cell #n n/e/s/w of cell #m?"""
                 return Pointer(n=arg_order[x.n])
             else:
                 return x
-        return self.copy(args=new_args).transform_register_args(sub)
+        return self.copy(args=new_args).transform_register_fields(sub)
 
     def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
+        """
+        Create a register machine that should be used to answer sub-queries.
+        Normal machines create translators, translators create normal machines.
+        """
         env = Translator(context=self.context, nominal_budget=nominal_budget, parent_cmd=cmd)
         return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
 
     def make_head(self, Q, nominal_budget=float('inf')):
+        """
+        Create a message that represents the question this machine is trying to answer.
+        """
         return Message('Q[{}]: '.format(nominal_budget)) + Q
 
     def default_child_budget(self):
+        """
+        The default budget for subqueries that dont' specify a budget.
+        """
         if self.nominal_budget == float('inf') or self.nominal_budget == 10:
             return self.nominal_budget
         return self.nominal_budget // 10
 
-    def render_question(self, Q, nominal_budget=float('inf'), reg=None):
-        if reg is None:
-            return Message('Q[{}]: '.format(nominal_budget)) + Q
-        if reg is not None:
-            return Message('Q[{}][]: '.format(nominal_budget), reg) + Q
+    def render_question(self, Q, nominal_budget=float('inf')):
+        """
+        Create a message that represents a subquestion.
+        """
+        return Message('Q[{}]: '.format(nominal_budget)) + Q
 
     def pre_suggestions(self):
+        """
+        Return a list of commands that the user can select by pressing <up>
+        """
         result = []
         for register in self.registers:
             for m in register.contents:
@@ -292,10 +246,17 @@ ask is cell #n n/e/s/w of cell #m?"""
         return result
     
 class Translator(RegisterMachine):
+    """
+    A register machine with fewer registers,
+    which is intended to translate a concrete query into an abstract query.
+    Everything is optimized to simply relay questions and answers with minimal
+    processing.
+    There need to be 5 registers only to accomodate errors passing through.
+    """
 
     kind = "translate"
     max_registers = 5
-    initial_budget_consumption = 0
+    cost_to_ask_Q = 1
     prompt = "-> "
 
     def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
@@ -312,6 +273,11 @@ class Translator(RegisterMachine):
         return Message('Q[abstract]{}: '.format("" if reg is None else reg)) + Q
 
 class Context(object):
+    """
+    A Context is used for looking up and eliciting responses.
+    Generally one is created at the entry point and then passed
+    on recursively to all child environments.
+    """
 
     def __init__(self):
         self.terminal = term.Terminal()
@@ -326,7 +292,24 @@ class Context(object):
             v.close()
         self.terminal.__exit__(*args)
 
+class ChangedContinuationError(Exception):
+    """
+    Raised when we jump out of or into a computation and then try to return
+
+    This is expected to happen sometimes when using Raise or Fix commands
+    """
+    pass
+
 class UnwindRecursion(Exception):
+    """
+    We replace RecursionErrors with UnwindRecursion
+    In an error handler you can call unwind.
+    The first n times you do this, it reraises UnwindRecursion.
+
+    The point is to move some distance away from a recursion error
+    before dropping the user back into an interactive mode,
+    so that they have some room to breathe.
+    """
 
     def __init__(self, n):
         self.n = n
@@ -337,7 +320,7 @@ class UnwindRecursion(Exception):
         raise UnwindRecursion(self.n-1)
 
 def get_response(env, kind, use_cache=True, replace_old=False, error_message=None,
-        prompt=">>> ", default=None, make_pre_suggestions=lambda : []):
+        prompt=">> ", default=None, make_pre_suggestions=lambda : []):
     if error_message is not None:
         replace_old = True
     lines = env.get_lines()
@@ -364,3 +347,77 @@ def get_response(env, kind, use_cache=True, replace_old=False, error_message=Non
         if use_cache:
             suggester.set_cached_response(obs, response)
     return response
+
+def run_machine(state, nominal_budget=float('inf'), budget=float('inf'), previous_cmd=None):
+    """
+    nominal budget: if this budget is exceded, raise a "Budget exhausted" error
+    budget: if this budget is exceeded, interrupt execution because some parent has exhausted its nominal_budget
+    """
+    starting_state = state
+    error = None
+    error_cmd = None
+    budget_consumed = 0
+    budget = min(budget, nominal_budget)
+    fixed = False 
+    fixing_cmd = None
+    command = state.parent_cmd if previous_cmd is None else previous_cmd
+    def ret(m):
+        if starting_state.parent_cmd != state.parent_cmd:
+            raise ChangedContinuationError()
+        return m, command, budget_consumed
+    while True:
+        if budget_consumed >= budget or budget_consumed > 1e5:
+            exhausted = budget_consumed >= nominal_budget
+            command = commands.Interrupted(exhausted, command, budget_consumed=budget_consumed, state=state)
+            return ret(command.make_message())
+        def make_pre_suggestions():
+            pre_suggestions = state.pre_suggestions()
+            if error_cmd is not None: pre_suggestions.append(error_cmd.string)
+            return pre_suggestions
+        if error is None:
+            error_message = None
+        else:
+            if error_cmd is None:
+                error_message = error
+            else:
+                error_message = "{}: {}".format(error, error_cmd.string)
+        s = get_response(state, error_message=error_message,
+                use_cache=state.use_cache, prompt=state.prompt,
+                kind=state.kind, make_pre_suggestions=make_pre_suggestions)
+        command = commands.parse_command(s)
+        command = command.copy(string=s, state=state)
+        if fixing_cmd is not None and s == error_cmd.string:
+            error = "nothing was fixed"
+            error_cmd = fixing_cmd
+            state = fixing_cmd.state
+            fixing_cmd = None
+        elif s == "help":
+            error = help_message
+            error_cmd = None
+        elif isinstance(command, commands.Malformed):
+            error = "syntax error (type 'help' for help)"
+            error_cmd = command
+        elif isinstance(command, commands.Fix):
+            error_cmd = state.registers[command.n].cmd.command_for_fix()
+            error = "previously"
+            fixing_cmd = command
+            state = error_cmd.state
+            fixed = True
+        else:
+            try:
+                fixing_cmd = None
+                retval, state, command = command.execute(state, budget - budget_consumed)
+                budget_consumed += command.budget_consumed
+                if retval is not None:
+                    return ret(retval)
+                error = None
+                error_cmd = None
+            except commands.BadCommand as e:
+                error = str(e)
+                error_cmd = command
+            except UnwindRecursion as e:
+                if e.unwound(): #reraise unless we've unwound all n steps of recursion
+                    error = "Recursion error"
+                    error_cmd = command
+            except RecursionError:
+                raise UnwindRecursion(30)

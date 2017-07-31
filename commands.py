@@ -1,20 +1,31 @@
 import pyparsing as pp
-from utils import unweave
-from messages import Message, Pointer, RegisterReference
+import utils
+from messages import Message, Pointer
 import messages
 import worlds
 import main
 
 class BadCommand(Exception):
+    """
+    Raised when a command can't be executed
+    """
     def __init__(self, explanation, **kwargs):
         super().__init__(**kwargs)
         self.explanation = explanation
     def __str__(self):
         return self.explanation
 
-class Command(object):
+class Command(utils.Copyable):
+    """
+    An operation that changes the state of a register machine,
+    and potentially returns a value.
+    """
 
-    arg_names = []
+    command_args = []
+
+    @property
+    def arg_names(self):
+        return self.command_args + ["string", "state", "budget_consumed"]
 
     def __init__(self, string=None, state=None, budget_consumed=0, **kwargs):
         self.string = string
@@ -23,11 +34,6 @@ class Command(object):
 
     def execute(self, env, budget, cmd):
         raise NotImplemented()
-
-    def copy(self, **kwargs):
-        for k in ["string", "state", "budget_consumed"] + self.arg_names:
-            if k not in kwargs: kwargs[k] = self.__dict__[k]
-        return self.__class__(**kwargs)
 
     def command_for_raise(self):
         return self
@@ -42,9 +48,17 @@ class Command(object):
         return self.budget_consumed
 
 class Malformed(Command):
+    """
+    A command that is syntactically malformed (will typically result in an error)
+    """
     pass
 
 def requires_register(f):
+    """
+    This decorates the execute method of any command that requires a free register
+
+    If no registers are available, it will raise an error.
+    """
     def decorated(command, env, budget):
         if len(env.registers) >= env.max_registers:
             raise BadCommand("no free registers (use clear or replace instead)")
@@ -52,7 +66,7 @@ def requires_register(f):
     return decorated
 
 class Interrupted(Command):
-    arg_names = ["exhausted", "previous"]
+    command_args = ["exhausted", "previous"]
     def __init__(self, exhausted=True, previous=None, **kwargs):
         self.exhausted = exhausted
         self.previous = previous
@@ -64,7 +78,7 @@ class Interrupted(Command):
 
 class Ask(Command):
 
-    arg_names=["question", "nominal_budget", "result_cmd"]
+    command_args =["question", "nominal_budget", "result_cmd"]
     def __init__(self, question, nominal_budget=None, result_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.question = question
@@ -83,12 +97,17 @@ class Ask(Command):
             raise BadCommand("invalid reference")
         builtin_response = builtin_handler(question)
         if builtin_response is not None:
-            result_cmd = None
             budget_consumed = 1
+            result_cmd = None
             answer = builtin_response
         else:
+            budget_consumed = env.cost_to_ask_Q
             answerer = env.make_child(question, cmd=self, nominal_budget=nominal_budget)
-            answer, result_cmd, budget_consumed = answerer.run(nominal_budget, budget)
+            answer, result_cmd, step_budget_consumed = main.run_machine(answerer,
+                    nominal_budget=nominal_budget-budget_consumed,
+                    budget=budget-budget_consumed
+                )
+            budget_consumed += step_budget_consumed
         answer, env = env.contextualize(answer)
         addressed_question = env.render_question(self.question, nominal_budget=nominal_budget)
         addressed_answer = Message('A: ') + answer
@@ -103,26 +122,26 @@ class Ask(Command):
 
 def builtin_handler(Q):
     if Q.matches("what cell contains the agent in grid []?"):
-        world = messages.get_world(Q.args[0])
+        world = messages.get_world(Q.fields[0])
         if world is not None:
             grid, agent, history = world
             return Message("the agent is in cell []", messages.CellMessage(agent))
     if Q.matches("what is in cell [] in grid []?"):
-        cell = messages.get_cell(Q.args[0])
-        world = messages.get_world(Q.args[1])
+        cell = messages.get_cell(Q.fields[0])
+        world = messages.get_world(Q.fields[1])
         if cell is not None and world is not None:
             return Message("it contains []", Message(worlds.look(world, cell)))
     for direction in worlds.directions:
         if Q.matches("is cell [] {} of cell []?".format(direction)):
-            a = messages.get_cell(Q.args[0])
-            b = messages.get_cell(Q.args[1])
+            a = messages.get_cell(Q.fields[0])
+            b = messages.get_cell(Q.fields[1])
             if a is not None and b is not None:
                 if (a - b).in_direction(direction):
                     return Message("yes")
                 else:
                     return Message("no")
         if Q.matches("move the agent {} in grid []".format(direction)):
-            world = messages.get_world(Q.args[0])
+            world = messages.get_world(Q.fields[0])
             if world is not None:
                 new_world, moved = worlds.move_person(world, direction)
                 if moved:
@@ -130,7 +149,7 @@ def builtin_handler(Q):
                 else:
                     return Message("it can't move that direction")
         if Q.matches("what cell is directly {} of cell []?".format(direction)):
-            cell = messages.get_cell(Q.args[0])
+            cell = messages.get_cell(Q.fields[0])
             if cell is not None:
                 new_cell, moved = cell.move(direction)
                 if moved:
@@ -141,7 +160,7 @@ def builtin_handler(Q):
 
 class View(Command):
 
-    arg_names = ["n"]
+    command_args = ["n"]
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
         self.n = n 
@@ -156,7 +175,7 @@ class View(Command):
 
 class Say(Command):
 
-    arg_names = ["message"]
+    command_args = ["message"]
     def __init__(self, message, **kwargs):
         super().__init__(**kwargs)
         self.message = message
@@ -174,7 +193,7 @@ class Say(Command):
 
 class Clear(Command):
 
-    arg_names = ["n"]
+    command_args = ["n"]
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -194,7 +213,7 @@ def clear(n, env):
 
 class Replace(Command):
 
-    arg_names = ["ns", "message"]
+    command_args = ["ns", "message"]
     def __init__(self, ns, message, **kwargs):
         super().__init__(**kwargs)
         self.ns = ns
@@ -218,7 +237,7 @@ class Replace(Command):
 
 class Assert(Command):
 
-    arg_names = ["assertion", "error_cmd", "result_cmd", "failed"]
+    command_args = ["assertion", "error_cmd", "result_cmd", "failed"]
     def __init__(self, assertion, error_cmd=None, result_cmd=None, failed=False, **kwargs):
         super().__init__(**kwargs)
         self.assertion = assertion
@@ -234,7 +253,7 @@ class Assert(Command):
         assertion = Message("T[rue] or F[alse] (can give explanation for F) -- ") + self.assertion.instantiate(env.args)
         state = env.delete_register(len(env.registers)-1)
         answerer = state.make_child(assertion, cmd=self, nominal_budget=state.nominal_budget)
-        answer, result_cmd, budget_consumed = answerer.run(state.nominal_budget, budget)
+        answer, result_cmd, budget_consumed = main.run_machine(answerer, state.nominal_budget, budget)
         cmd = self.copy(error_cmd=register.cmd, budget_consumed=budget_consumed, result_cmd=result_cmd)
         if answer.matches("T") or answer.matches("t"):
             new_contents = register.contents + (Message("Checked: ") + self.assertion,)
@@ -261,7 +280,7 @@ class Assert(Command):
 
 class Reply(Command):
 
-    arg_names = ["message", "result_cmd"]
+    command_args = ["message", "result_cmd"]
     def __init__(self, message, result_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.message = message
@@ -289,7 +308,7 @@ class Reply(Command):
 
 class Raise(Command):
 
-    arg_names = ["n", "message", "old_cmd"]
+    command_args = ["n", "message", "old_cmd"]
     def __init__(self, n, message, old_cmd=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -317,14 +336,14 @@ class Raise(Command):
 
 class Fix(Command):
 
-    arg_names = ["n"]
+    command_args = ["n"]
     def __init__(self, n, **kwargs):
         super().__init__(**kwargs)
         self.n = n
 
 class Resume(Command):
 
-    arg_names = ["n", "message", "nominal_budget", "question", "result_cmd", "previous"]
+    command_args = ["n", "message", "nominal_budget", "question", "result_cmd", "previous"]
     def __init__(self, n, message, nominal_budget=None, question=None, result_cmd=None, previous=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -354,8 +373,9 @@ class Resume(Command):
             raise BadCommand("invalid reference")
         new_env = result_cmd.followup(result_cmd.state, followup, self)
         old_budget_consumed = register.cmd.budget_consumed_for_more()
-        result, resume_result_cmd, budget_consumed = new_env.run(
-                resume_budget - old_budget_consumed, budget,
+        result, resume_result_cmd, budget_consumed = main.run_machine(new_env,
+                nominal_budget=resume_budget - old_budget_consumed,
+                budget=budget,
             )
         result, env = env.contextualize(result)
         addressed_question = Message("Q: ") + self.message
@@ -378,7 +398,7 @@ class Resume(Command):
 
 class More(Command):
 
-    arg_names = ["n", "result_cmd", "nominal_budget", "question"]
+    command_args = ["n", "result_cmd", "nominal_budget", "question"]
     def __init__(self, n, result_cmd=None, nominal_budget=None, question=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
@@ -403,7 +423,7 @@ class More(Command):
         if result_cmd.exhausted:
             more_budget *= 10
         new_env = result_cmd.state
-        new_head = new_env.make_head(more_question, more_budget).copy(args=new_env.registers[0].contents[0].args)
+        new_head = new_env.make_head(more_question, more_budget).copy(fields=new_env.registers[0].contents[0].fields)
         new_first_register = (new_head,) + new_env.registers[0].contents[1:]
         new_env = new_env.add_register(*new_first_register, cmd=self, replace=True, n=0, contextualize=False).copy(parent_cmd=self)
         budget = min(budget, more_budget)
@@ -424,9 +444,9 @@ class More(Command):
                 _, new_env, recursive_more_cmd = recursive_more_cmd.execute(new_env, budget)
                 previous_cmd = recursive_more_cmd
                 budget_consumed += recursive_more_cmd.budget_consumed
-        result, more_result_cmd, step_budget_consumed = new_env.run(
-                more_budget - budget_consumed,
-                budget - budget_consumed, 
+        result, more_result_cmd, step_budget_consumed = main.run_machine(new_env,
+                nominal_budget=more_budget - budget_consumed,
+                budget=budget - budget_consumed, 
                 previous_cmd=previous_cmd
             )
         budget_consumed += step_budget_consumed
@@ -488,18 +508,15 @@ prose = pp.Word(" ,!?+-/*.;:_<>=&%{}[]\'\"" + pp.alphas).leaveWhitespace()
 message_pointer = (raw("#") + number).leaveWhitespace()
 message_pointer.setParseAction(lambda x : Pointer(x[0]))
 
-register_reference = (raw("@") + number).leaveWhitespace()
-register_reference.setParseAction(lambda x : RegisterReference(x[0]))
-
 def message_action(xs):
-    text, args = unweave(xs)
+    text, fields = utils.unweave(xs)
     if text == ("",):
         raise pp.ParseException("can't parse empty message")
-    return Message(text, args)
+    return Message(text=text, fields=fields)
 
 message = pp.Forward()
 submessage = raw("(") + message + raw(")")
-argument = submessage | message_pointer | register_reference
+argument = submessage | message_pointer
 literal_message = (
         pp.Optional(prose, default="") +
         pp.ZeroOrMore(argument + pp.Optional(prose, default=""))

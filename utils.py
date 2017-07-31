@@ -58,3 +58,13 @@ def matched_paren(s, k):
         k += d
         if k < 0 or k >= len(s):
             return None
+
+class Copyable(object):
+    def copy(self, **kwargs):
+        for k in self.arg_names:
+            if k not in kwargs: kwargs[k] = self.__dict__[k]
+        return self.__class__(**kwargs)
+
+    @property
+    def arg_names(self):
+        raise NotImplemented()
