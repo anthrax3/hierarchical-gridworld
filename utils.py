@@ -77,3 +77,11 @@ class Copyable(object):
     @property
     def arg_names(self):
         raise NotImplemented()
+
+def is_power_of_ten(x):
+    if x == 10 or x == float('inf'):
+        return True
+    elif x % 10 != 0:
+        return False
+    else:
+        return is_power_of_ten(x // 10)
