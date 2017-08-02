@@ -305,7 +305,7 @@ class Assert(Command):
         state = env.delete_register(len(env.registers) - 1)
         child = state.make_child(assertion,
                                  cmd=cmd,
-                                 nominal_budget=state.nominal_budget,
+                                 nominal_budget=float('inf'),
                                  budget=budget)
         return None, child, cmd
 
@@ -313,15 +313,20 @@ class Assert(Command):
         env = self.state
         cmd = self.copy(budget_consumed=sub_budget_consumed,
                         result_cmd=result_cmd)
-        if answer.matches("T") or answer.matches("t"):
+        if (result.matches("T") or result.matches("t") or
+                result.matches("True") or result.matches("true")):
             asserted = Message("Checked: ") + self.assertion
-            new_contents = self.register.contents + asserted
-            env = env.add_register(*new_contents, contextualize=False, cmd=cmd)
+            new_contents = self.register.contents + (asserted,)
+            env = env.add_register(*new_contents,
+                                   contextualize=False,
+                                   cmd=cmd,
+                                   n=len(env.registers)-1,
+                                   replace=True)
         else:
             cmd = cmd.copy(failed=True)
-            answer, env = self.env.contextualize(answer)
+            result, env = self.env.contextualize(result)
             env = env.add_register(Message("Assert: ") + self.assertion,
-                                   Message("A: ") + answer,
+                                   Message("A: ") + result,
                                    cmd=cmd,
                                    contextualize=False)
         env = env.consume_budget(cmd.budget_consumed)
@@ -462,7 +467,7 @@ class Resume(Command):
         result, env = env.contextualize(result)
         question = Message("Q: ") + self.message
         answer = Message("A: ") + result
-        new_contents = register.contents + (question, answer)
+        new_contents = self.register.contents + (question, answer)
         cmd = self.copy(result_cmd=result_cmd,
                         budget_consumed=sub_budget_consumed)
         env = env.add_register(*new_contents,
@@ -535,8 +540,7 @@ class More(Command):
             budget_consumed=0)
         if (hasattr(result_cmd.previous, "result_cmd") and
                 isinstance(result_cmd.previous.result_cmd, Interrupted)):
-            if ((not result_cmd.previous.result_cmd.exhausted and
-                 not result_cmd.exhausted) or
+            if (not result_cmd.previous.result_cmd.exhausted or
                     isinstance(new_env, main.Translator)):
                 if isinstance(result_cmd.previous, Ask):
                     new_n = len(new_env.registers) - 1
@@ -558,10 +562,10 @@ class More(Command):
         budget_consumed = self.budget_consumed + sub_budget_consumed
         result, env = env.contextualize(result)
         answer = Message('A: ') + result
-        cmd = self.copy(result_cmd=result_cmd,
-                             budget_consumed=budget_consumed)
+        cmd = self.copy(result_cmd=result_cmd, budget_consumed=budget_consumed)
         new_question = env.render_question(self.question, self.nominal_budget)
-        new_contents = (new_question, ) + self.register.contents[1:-1] + (answer, )
+        new_contents = (new_question, ) + self.register.contents[1:-1] + (
+            answer, )
         env = env.add_register(*new_contents,
                 cmd=cmd, replace=True, n = self.n, contextualize=False)
         env = env.consume_budget(cmd.budget_consumed)
