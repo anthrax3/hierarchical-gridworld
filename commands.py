@@ -484,7 +484,7 @@ class More(Command):
     command_args = ["n", "result_cmd", "nominal_budget", "question", "register"
                     ]
     def __init__(self, n, result_cmd=None, nominal_budget=None, question=None,
-            **kwargs):
+            register=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
         self.result_cmd = result_cmd
@@ -551,7 +551,7 @@ class More(Command):
 
     def finish(self, result, result_cmd, sub_budget_consumed):
         env = self.state
-        budget_consumed += self.budget_consumed + step_budget_consumed
+        budget_consumed = self.budget_consumed + sub_budget_consumed
         result, env = env.contextualize(result)
         answer = Message('A: ') + result
         more_cmd = self.copy(result_cmd=more_result_cmd,

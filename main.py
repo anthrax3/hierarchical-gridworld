@@ -260,7 +260,7 @@ class RegisterMachine(utils.Copyable):
                          initial_nominal_budget=initial_nominal_budget,
                          parent_cmd=cmd,
                          **kwargs)
-        return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
+        return env.add_register(env.make_head(Q, initial_nominal_budget), cmd=cmd)
 
     def make_head(self, Q, nominal_budget=float('inf')):
         """
