@@ -142,7 +142,7 @@ class Ask(Command):
         budget_consumed = sub_budget_consumed + self.budget_consumed
         cmd = self.copy(result_cmd=result_cmd, budget_consumed=budget_consumed)
         env = env.add_register(question, answer, cmd=cmd, contextualize=False)
-        return None, env, cmd
+        return None, env.consume_budget(cmd.budget_consumed), cmd
 
     def command_for_raise(self):
         return self if self.result_cmd is None else self.result_cmd
@@ -223,6 +223,7 @@ class Say(Command):
     def execute(self):
         env = self.state
         cmd = self.copy(budget_consumed=1)
+        env = env.consume_budget(cmd.budget_consumed)
         try:
             return None, env.add_register(self.message, cmd=cmd), cmd
         except messages.BadInstantiation:
@@ -267,6 +268,7 @@ class Replace(Command):
     def execute(self):
         env = self.state
         cmd = self.copy(budget_consumed=1)
+        env = env.consume_budget(cmd.budget_consumed)
         try:
             env = env.add_register(self.message, cmd=cmd)
             removed = []
@@ -322,7 +324,8 @@ class Assert(Command):
                                    Message("A: ") + answer,
                                    cmd=cmd,
                                    contextualize=False)
-        return None, state, cmd
+        env = env.consume_budget(cmd.budget_consumed)
+        return None, env, cmd
 
     def command_for_raise(self):
         if self.failed:
@@ -467,6 +470,7 @@ class Resume(Command):
                                contextualize=False,
                                n=self.n,
                                replace=True)
+        env = env.consume_budget(cmd.budget_consumed)
         return None, env, cmd
 
     def command_for_raise(self):
@@ -554,13 +558,14 @@ class More(Command):
         budget_consumed = self.budget_consumed + sub_budget_consumed
         result, env = env.contextualize(result)
         answer = Message('A: ') + result
-        more_cmd = self.copy(result_cmd=more_result_cmd,
+        cmd = self.copy(result_cmd=result_cmd,
                              budget_consumed=budget_consumed)
         new_question = env.render_question(self.question, self.nominal_budget)
-        new_contents = (new_question, ) + register.contents[1:-1] + (answer, )
+        new_contents = (new_question, ) + self.register.contents[1:-1] + (answer, )
         env = env.add_register(*new_contents,
-                cmd=more_cmd, replace=True, n = self.n, contextualize=False)
-        return None, env, more_cmd
+                cmd=cmd, replace=True, n = self.n, contextualize=False)
+        env = env.consume_budget(cmd.budget_consumed)
+        return None, env, cmd
 
     def command_for_raise(self):
         if self.result_cmd is not None:

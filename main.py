@@ -438,61 +438,60 @@ def run_machine(state):
                                            budget_consumed=budget_consumed,
                                            state=state)
             retval = command.make_message()
-        while retval is not None:
+        if retval is not None:
             if state.parent_cmd is None:
                 return retval, command, state.budget_consumed
-            retval, state, cmd = state.parent_cmd.finish(retval, command,
+            retval, state, command = state.parent_cmd.finish(retval, command,
                                                          state.budget_consumed)
-
-        def make_pre_suggestions():
-            pre_suggestions = state.pre_suggestions()
-            if error_cmd is not None: pre_suggestions.append(error_cmd.string)
-            return pre_suggestions
-
-        if error is None:
-            error_message = None
         else:
-            if error_cmd is None:
-                error_message = error
+            def make_pre_suggestions():
+                pre_suggestions = state.pre_suggestions()
+                if error_cmd is not None: pre_suggestions.append(error_cmd.string)
+                return pre_suggestions
+
+            if error is None:
+                error_message = None
             else:
-                error_message = "{}: {}".format(error, error_cmd.string)
-        s = get_response(state,
-                         error_message=error_message,
-                         use_cache=state.use_cache,
-                         prompt=state.prompt,
-                         kind=state.kind,
-                         make_pre_suggestions=make_pre_suggestions)
-        command = commands.parse_command(s)
-        command = command.copy(string=s, state=state)
-        if fixing_cmd is not None and s == error_cmd.string:
-            error = "nothing was fixed"
-            error_cmd = fixing_cmd
-            state = fixing_cmd.state
-            fixing_cmd = None
-        elif s == "help":
-            error = help_message
-            error_cmd = None
-        elif isinstance(command, commands.Malformed):
-            error = "syntax error (type 'help' for help)"
-            error_cmd = command
-        elif isinstance(command, commands.Fix):
-            error_cmd = state.registers[command.n].cmd.command_for_fix()
-            error = "previously"
-            fixing_cmd = command
-            state = error_cmd.state
-        else:
-            try:
+                if error_cmd is None:
+                    error_message = error
+                else:
+                    error_message = "{}: {}".format(error, error_cmd.string)
+            s = get_response(state,
+                             error_message=error_message,
+                             use_cache=state.use_cache,
+                             prompt=state.prompt,
+                             kind=state.kind,
+                             make_pre_suggestions=make_pre_suggestions)
+            command = commands.parse_command(s)
+            command = command.copy(string=s, state=state)
+            if fixing_cmd is not None and s == error_cmd.string:
+                error = "nothing was fixed"
+                error_cmd = fixing_cmd
+                state = fixing_cmd.state
                 fixing_cmd = None
-                retval, state, command = command.execute()
-                state = state.consume_budget(command.budget_consumed)
-                error = None
+            elif s == "help":
+                error = help_message
                 error_cmd = None
-            except commands.BadCommand as e:
-                error = str(e)
+            elif isinstance(command, commands.Malformed):
+                error = "syntax error (type 'help' for help)"
                 error_cmd = command
-            except UnwindRecursion as e:
-                if e.unwound():  #reraise unless we've unwound all n steps of recursion
-                    error = "Recursion error"
+            elif isinstance(command, commands.Fix):
+                error_cmd = state.registers[command.n].cmd.command_for_fix()
+                error = "previously"
+                fixing_cmd = command
+                state = error_cmd.state
+            else:
+                try:
+                    fixing_cmd = None
+                    retval, state, command = command.execute()
+                    error = None
+                    error_cmd = None
+                except commands.BadCommand as e:
+                    error = str(e)
                     error_cmd = command
-            except RecursionError:
-                raise UnwindRecursion(30)
+                except UnwindRecursion as e:
+                    if e.unwound():  #reraise unless we've unwound all n steps of recursion
+                        error = "Recursion error"
+                        error_cmd = command
+                except RecursionError:
+                    raise UnwindRecursion(30)
