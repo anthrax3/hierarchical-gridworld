@@ -464,7 +464,7 @@ def run_machine(state):
                              make_pre_suggestions=make_pre_suggestions)
             command = commands.parse_command(s)
             command = command.copy(string=s, state=state)
-            if fixing_cmd is not None and s == error_cmd.string:
+            if fixing_cmd is not None and s == fixing_cmd.string:
                 error = "nothing was fixed"
                 error_cmd = fixing_cmd
                 state = fixing_cmd.state
