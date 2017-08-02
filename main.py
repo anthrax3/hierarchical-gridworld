@@ -69,8 +69,12 @@ class RegisterMachine(utils.Copyable):
     kind = "implement"  # used to choose which suggestions to show
     prompt = ">> "
 
+    @property
+    def child_class(self):
+        return Translator
+
     arg_names = ["registers", "context", "args", "use_cache", "nominal_budget",
-                 "parent_cmd"]
+                 "budget", "budget_consumed", "parent_cmd", "initial_nominal_budget"]
 
     def __init__(self,
                  registers=(),
@@ -78,13 +82,22 @@ class RegisterMachine(utils.Copyable):
                  context=None,
                  use_cache=True,
                  nominal_budget=float('inf'),
+                 initial_nominal_budget=None,
+                 budget=float('inf'),
+                 budget_consumed=0,
                  parent_cmd=None):
         self.registers = registers
         self.args = args
         self.context = context
         self.use_cache = use_cache
-        self.parent_cmd = parent_cmd
         self.nominal_budget = nominal_budget
+        if initial_nominal_budget is None:
+            self.initial_nominal_budget = nominal_budget
+        else:
+            self.initial_nominal_budget = initial_nominal_budget
+        self.budget = min(nominal_budget, budget)
+        self.budget_consumed = budget_consumed
+        self.parent_cmd = parent_cmd
 
     def __str__(self):
         return '\n'.join(self.get_lines())
@@ -100,6 +113,9 @@ class RegisterMachine(utils.Copyable):
                 self.context.terminal.print_line(line)
             self.context.terminal.print_line(message)
             term.get_input(self.context.terminal)
+
+    def consume_budget(self, k):
+        return self.copy(budget_consumed = self.budget_consumed + k)
 
     def contextualize(self, m):
         """
@@ -230,15 +246,21 @@ class RegisterMachine(utils.Copyable):
 
         return self.copy(args=new_args).transform_register_fields(sub)
 
-    def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
+    def make_child(self, Q, nominal_budget=float('inf'), cmd=None,
+            initial_nominal_budget=None, **kwargs):
         """
         Create a register machine that should be used to answer sub-queries.
         Normal machines create translators, translators create normal machines.
         """
-        env = Translator(context=self.context,
+        if initial_nominal_budget is None:
+            initial_nominal_budget = nominal_budget
+        nominal_budget = min(initial_nominal_budget, nominal_budget)
+        env = self.child_class(context=self.context,
                          nominal_budget=nominal_budget,
-                         parent_cmd=cmd)
-        return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
+                         initial_nominal_budget=initial_nominal_budget,
+                         parent_cmd=cmd,
+                         **kwargs)
+        return env.add_register(env.make_head(Q, initial_nominal_budget), cmd=cmd)
 
     def make_head(self, Q, nominal_budget=float('inf')):
         """
@@ -248,11 +270,13 @@ class RegisterMachine(utils.Copyable):
 
     def default_child_budget(self):
         """
-        The default budget for subqueries that dont' specify a budget.
+        The default budget for subqueries that don't specify a budget.
         """
-        if self.nominal_budget == float('inf') or self.nominal_budget == 10:
-            return self.nominal_budget
-        return self.nominal_budget // 10
+        base_budget = self.initial_nominal_budget
+        if base_budget == float('inf') or base_budget == 10:
+            return base_budget
+        assert utils.is_power_of_ten(base_budget)
+        return base_budget // 10
 
     def render_question(self, Q, nominal_budget=float('inf')):
         """
@@ -289,14 +313,12 @@ class Translator(RegisterMachine):
     cost_to_ask_Q = 1
     prompt = "-> "
 
-    def make_child(self, Q, nominal_budget=float('inf'), cmd=None):
-        env = RegisterMachine(context=self.context,
-                              nominal_budget=nominal_budget,
-                              parent_cmd=cmd)
-        return env.add_register(env.make_head(Q, nominal_budget), cmd=cmd)
+    @property
+    def child_class(self):
+        return RegisterMachine
 
     def default_child_budget(self):
-        return self.nominal_budget
+        return self.initial_nominal_budget
 
     def make_head(self, Q, nominal_budget=float('inf')):
         return Message('Q[concrete]: ') + Q
@@ -401,90 +423,75 @@ def get_response(env,
     return response
 
 
-def run_machine(state,
-                nominal_budget=float('inf'),
-                budget=float('inf'),
-                previous_cmd=None):
-    """
-    nominal budget: if this budget is exceded, raise a "Budget exhausted" error
-    budget: if this budget is exceeded, interrupt execution because some parent has exhausted its nominal_budget
-    """
-    starting_state = state
+def run_machine(state):
+    command = None
+    retval = None
     error = None
     error_cmd = None
-    budget_consumed = 0
-    budget = min(budget, nominal_budget)
-    fixed = False
     fixing_cmd = None
-    command = state.parent_cmd if previous_cmd is None else previous_cmd
-
-    def ret(m):
-        if starting_state.parent_cmd != state.parent_cmd:
-            raise ChangedContinuationError()
-        return m, command, budget_consumed
-
     while True:
-        if budget_consumed >= budget or budget_consumed > 1e5:
-            exhausted = budget_consumed >= nominal_budget
+        if state.budget_consumed >= state.budget and retval is None:
+            budget_consumed = state.budget_consumed
+            exhausted = budget_consumed >= state.nominal_budget
             command = commands.Interrupted(exhausted,
                                            command,
                                            budget_consumed=budget_consumed,
                                            state=state)
-            return ret(command.make_message())
-
-        def make_pre_suggestions():
-            pre_suggestions = state.pre_suggestions()
-            if error_cmd is not None: pre_suggestions.append(error_cmd.string)
-            return pre_suggestions
-
-        if error is None:
-            error_message = None
+            retval = command.make_message()
+        if retval is not None:
+            if state.parent_cmd is None:
+                return retval, command, state.budget_consumed
+            retval, state, command = state.parent_cmd.finish(retval, command,
+                                                         state.budget_consumed)
         else:
-            if error_cmd is None:
-                error_message = error
+            def make_pre_suggestions():
+                pre_suggestions = state.pre_suggestions()
+                if error_cmd is not None: pre_suggestions.append(error_cmd.string)
+                return pre_suggestions
+
+            if error is None:
+                error_message = None
             else:
-                error_message = "{}: {}".format(error, error_cmd.string)
-        s = get_response(state,
-                         error_message=error_message,
-                         use_cache=state.use_cache,
-                         prompt=state.prompt,
-                         kind=state.kind,
-                         make_pre_suggestions=make_pre_suggestions)
-        command = commands.parse_command(s)
-        command = command.copy(string=s, state=state)
-        if fixing_cmd is not None and s == error_cmd.string:
-            error = "nothing was fixed"
-            error_cmd = fixing_cmd
-            state = fixing_cmd.state
-            fixing_cmd = None
-        elif s == "help":
-            error = help_message
-            error_cmd = None
-        elif isinstance(command, commands.Malformed):
-            error = "syntax error (type 'help' for help)"
-            error_cmd = command
-        elif isinstance(command, commands.Fix):
-            error_cmd = state.registers[command.n].cmd.command_for_fix()
-            error = "previously"
-            fixing_cmd = command
-            state = error_cmd.state
-            fixed = True
-        else:
-            try:
+                if error_cmd is None:
+                    error_message = error
+                else:
+                    error_message = "{}: {}".format(error, error_cmd.string)
+            s = get_response(state,
+                             error_message=error_message,
+                             use_cache=state.use_cache,
+                             prompt=state.prompt,
+                             kind=state.kind,
+                             make_pre_suggestions=make_pre_suggestions)
+            command = commands.parse_command(s)
+            command = command.copy(string=s, state=state)
+            if fixing_cmd is not None and s == fixing_cmd.string:
+                error = "nothing was fixed"
+                error_cmd = fixing_cmd
+                state = fixing_cmd.state
                 fixing_cmd = None
-                retval, state, command = command.execute(
-                    state, budget - budget_consumed)
-                budget_consumed += command.budget_consumed
-                if retval is not None:
-                    return ret(retval)
-                error = None
+            elif s == "help":
+                error = help_message
                 error_cmd = None
-            except commands.BadCommand as e:
-                error = str(e)
+            elif isinstance(command, commands.Malformed):
+                error = "syntax error (type 'help' for help)"
                 error_cmd = command
-            except UnwindRecursion as e:
-                if e.unwound():  #reraise unless we've unwound all n steps of recursion
-                    error = "Recursion error"
+            elif isinstance(command, commands.Fix):
+                error_cmd = state.registers[command.n].cmd.command_for_fix()
+                error = "previously"
+                fixing_cmd = command
+                state = error_cmd.state
+            else:
+                try:
+                    fixing_cmd = None
+                    retval, state, command = command.execute()
+                    error = None
+                    error_cmd = None
+                except commands.BadCommand as e:
+                    error = str(e)
                     error_cmd = command
-            except RecursionError:
-                raise UnwindRecursion(30)
+                except UnwindRecursion as e:
+                    if e.unwound():  #reraise unless we've unwound all n steps of recursion
+                        error = "Recursion error"
+                        error_cmd = command
+                except RecursionError:
+                    raise UnwindRecursion(30)

@@ -36,7 +36,7 @@ class Command(utils.Copyable):
         self.state = state
         self.budget_consumed = budget_consumed
 
-    def execute(self, env, budget, cmd):
+    def execute(self):
         raise NotImplemented()
 
     def command_for_raise(self):
@@ -66,11 +66,12 @@ def requires_register(f):
     If no registers are available, it will raise an error.
     """
 
-    def decorated(command, env, budget):
+    def decorated(self):
+        env = self.state
         if len(env.registers) >= env.max_registers:
             raise BadCommand(
                 "no free registers (use clear or replace instead)")
-        return f(command, env, budget)
+        return f(self)
 
     return decorated
 
@@ -101,9 +102,13 @@ class Ask(Command):
         return [self.question]
 
     @requires_register
-    def execute(self, env, budget):
-        nominal_budget = env.default_child_budget(
-        ) if self.nominal_budget is None else self.nominal_budget
+    def execute(self):
+        env = self.state
+        budget = env.budget - env.budget_consumed
+        if self.nominal_budget is None:
+            nominal_budget = env.default_child_budget()
+        else:
+            nominal_budget = self.nominal_budget
         try:
             question = self.question.instantiate(env.args)
         except messages.BadInstantiation:
@@ -113,28 +118,31 @@ class Ask(Command):
             budget_consumed = 1
             result_cmd = None
             answer = builtin_response
+            cmd = self.copy(budget_consumed=1, nominal_budget=nominal_budget)
+            return cmd.finish(answer, None, 0)
         else:
             budget_consumed = env.cost_to_ask_Q
-            answerer = env.make_child(question,
-                                      cmd=self,
-                                      nominal_budget=nominal_budget)
-            answer, result_cmd, step_budget_consumed = main.run_machine(
-                answerer,
-                nominal_budget=nominal_budget - budget_consumed,
-                budget=budget - budget_consumed)
-            budget_consumed += step_budget_consumed
+            parent_cmd = self.copy(nominal_budget=nominal_budget,
+                                   budget_consumed=budget_consumed)
+            nominal_budget_remaining = nominal_budget - budget_consumed
+            budget_remaining = budget - budget_consumed
+            child = env.make_child(question,
+                                   cmd=parent_cmd,
+                                   initial_nominal_budget=nominal_budget,
+                                   nominal_budget=nominal_budget_remaining,
+                                   budget=budget_remaining)
+            return None, child, parent_cmd
+
+    def finish(self, answer, result_cmd, sub_budget_consumed):
+        env = self.state
         answer, env = env.contextualize(answer)
-        addressed_question = env.render_question(self.question,
-                                                 nominal_budget=nominal_budget)
-        addressed_answer = Message('A: ') + answer
-        cmd = self.copy(result_cmd=result_cmd,
-                        nominal_budget=nominal_budget,
-                        budget_consumed=budget_consumed)
-        env = env.add_register(addressed_question,
-                               addressed_answer,
-                               cmd=cmd,
-                               contextualize=False)
-        return None, env, cmd
+        question = env.render_question(self.question,
+                                       nominal_budget=self.nominal_budget)
+        answer = Message('A: ') + answer
+        budget_consumed = sub_budget_consumed + self.budget_consumed
+        cmd = self.copy(result_cmd=result_cmd, budget_consumed=budget_consumed)
+        env = env.add_register(question, answer, cmd=cmd, contextualize=False)
+        return None, env.consume_budget(cmd.budget_consumed), cmd
 
     def command_for_raise(self):
         return self if self.result_cmd is None else self.result_cmd
@@ -190,7 +198,8 @@ class View(Command):
         super().__init__(**kwargs)
         self.n = n
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         n = self.n
         if n < 0 or n >= len(env.args):
             raise BadCommand("invalid index")
@@ -211,8 +220,10 @@ class Say(Command):
         return [self.message]
 
     @requires_register
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         cmd = self.copy(budget_consumed=1)
+        env = env.consume_budget(cmd.budget_consumed)
         try:
             return None, env.add_register(self.message, cmd=cmd), cmd
         except messages.BadInstantiation:
@@ -230,8 +241,8 @@ class Clear(Command):
     def __str__(self):
         return "clear {}".format(self.n)
 
-    def execute(self, env, budget):
-        return None, clear(self.n, env), self
+    def execute(self):
+        return None, clear(self.n, self.state), self
 
 
 def clear(n, env):
@@ -254,8 +265,10 @@ class Replace(Command):
     def messages(self):
         return [self.message]
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         cmd = self.copy(budget_consumed=1)
+        env = env.consume_budget(cmd.budget_consumed)
         try:
             env = env.add_register(self.message, cmd=cmd)
             removed = []
@@ -270,53 +283,60 @@ class Replace(Command):
 
 class Assert(Command):
 
-    command_args = ["assertion", "error_cmd", "result_cmd", "failed"]
-    def __init__(self, assertion, error_cmd=None, result_cmd=None, failed=False, **kwargs):
+    command_args = ["assertion", "register", "result_cmd", "failed"]
+    def __init__(self, assertion, register=None, result_cmd=None, failed=False, **kwargs):
         super().__init__(**kwargs)
         self.assertion = assertion
-        self.error_cmd = error_cmd
+        self.register = register
         self.result_cmd = result_cmd
         self.failed = failed
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
+        budget = env.budget
         register = env.registers[-1]
         if not isinstance(register.cmd, Raise):
             if not isinstance(register.cmd, Assert) or register.cmd.failed:
                 raise BadCommand("can only assert after a raise")
-        assertion = Message(
-            "T[rue] or F[alse] (can give explanation for F) -- ") + self.assertion.instantiate(
-                env.args)
+        assertion_prefix = Message(
+            "T[rue] or F[alse] (can give explanation for F) -- ")
+        assertion = assertion_prefix + self.assertion.instantiate(env.args)
+        cmd = self.copy(register=register)
         state = env.delete_register(len(env.registers) - 1)
-        answerer = state.make_child(assertion,
-                                    cmd=self,
-                                    nominal_budget=state.nominal_budget)
-        answer, result_cmd, budget_consumed = main.run_machine(
-            answerer, state.nominal_budget, budget)
-        cmd = self.copy(error_cmd=register.cmd,
-                        budget_consumed=budget_consumed,
+        child = state.make_child(assertion,
+                                 cmd=cmd,
+                                 nominal_budget=float('inf'),
+                                 budget=budget)
+        return None, child, cmd
+
+    def finish(self, result, result_cmd, sub_budget_consumed):
+        env = self.state
+        cmd = self.copy(budget_consumed=sub_budget_consumed,
                         result_cmd=result_cmd)
-        if answer.matches("T") or answer.matches("t"):
-            new_contents = register.contents + (Message("Checked: ") +
-                                                self.assertion, )
-            state = state.add_register(*
-                                       new_contents,
-                                       contextualize=False,
-                                       cmd=cmd)
+        if (result.matches("T") or result.matches("t") or
+                result.matches("True") or result.matches("true")):
+            asserted = Message("Checked: ") + self.assertion
+            new_contents = self.register.contents + (asserted,)
+            env = env.add_register(*new_contents,
+                                   contextualize=False,
+                                   cmd=cmd,
+                                   n=len(env.registers)-1,
+                                   replace=True)
         else:
             cmd = cmd.copy(failed=True)
-            answer, state = state.contextualize(answer)
-            state = state.add_register(
-                Message("Assert: ") + self.assertion,
-                Message("A: ") + answer,
-                cmd=cmd,
-                contextualize=False)
-        return None, state, cmd
+            result, env = self.env.contextualize(result)
+            env = env.add_register(Message("Assert: ") + self.assertion,
+                                   Message("A: ") + result,
+                                   cmd=cmd,
+                                   contextualize=False)
+        env = env.consume_budget(cmd.budget_consumed)
+        return None, env, cmd
 
     def command_for_raise(self):
         if self.failed:
             return self.result_cmd
         else:
-            return self.error_cmd.command_for_raise()
+            return self.register.cmd.command_for_raise()
 
     def command_for_fix(self):
         if self.failed:
@@ -334,14 +354,16 @@ class Reply(Command):
         self.message = message
         self.result_cmd = result_cmd
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         try:
             answer = self.message.instantiate(env.args)
             return answer, env, self
         except messages.BadInstantiation:
             raise BadCommand("invalid reference")
 
-    def followup(self, env, followup, cmd):
+    def followup(self, followup, cmd):
+        env = self.state
         followup, env = env.contextualize(followup)
         env = env.copy(parent_cmd=cmd)
         addressed_answer = Message("A: ") + self.message
@@ -370,7 +392,8 @@ class Raise(Command):
         return [self.message]
 
     @requires_register
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         register = env.registers[self.n]
         try:
             message = Message("Error: ") + self.message.instantiate(env.args)
@@ -398,17 +421,19 @@ class Fix(Command):
 class Resume(Command):
 
     command_args = ["n", "message", "nominal_budget", "question", "result_cmd",
-                    "previous"]
-    def __init__(self, n, message, nominal_budget=None, question=None, result_cmd=None, previous=None, **kwargs):
+                    "register"]
+    def __init__(self, n, message, nominal_budget=None, question=None,
+            result_cmd=None, register=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
         self.message = message
         self.nominal_budget = nominal_budget
         self.question = question
         self.result_cmd = result_cmd
-        self.previous = previous
+        self.register = register
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
         try:
             register = env.registers[self.n]
         except IndexError:
@@ -426,28 +451,31 @@ class Resume(Command):
             followup = self.message.instantiate(env.args)
         except messages.BadInstantation:
             raise BadCommand("invalid reference")
-        new_env = result_cmd.followup(result_cmd.state, followup, self)
+        parent_cmd = self.copy(nominal_budget=resume_budget,
+                               question=resume_question,
+                               register=register)
+        new_env = result_cmd.followup(followup, parent_cmd)
         old_budget_consumed = register.cmd.budget_consumed_for_more()
-        result, resume_result_cmd, budget_consumed = main.run_machine(
-            new_env,
+        new_env = new_env.copy(
+            budget=env.budget,
             nominal_budget=resume_budget - old_budget_consumed,
-            budget=budget, )
+            budget_consumed=0)
+        return None, new_env, parent_cmd
+
+    def finish(self, result, result_cmd, sub_budget_consumed):
+        env = self.state
         result, env = env.contextualize(result)
-        addressed_question = Message("Q: ") + self.message
-        addressed_answer = Message("A: ") + result
-        old_contents = register.contents
-        new_contents = old_contents + (addressed_question, addressed_answer)
-        cmd = self.copy(nominal_budget=resume_budget,
-                        question=resume_question,
-                        result_cmd=resume_result_cmd,
-                        budget_consumed=budget_consumed,
-                        previous=register.cmd)
-        env = env.add_register(*
-                               new_contents,
+        question = Message("Q: ") + self.message
+        answer = Message("A: ") + result
+        new_contents = self.register.contents + (question, answer)
+        cmd = self.copy(result_cmd=result_cmd,
+                        budget_consumed=sub_budget_consumed)
+        env = env.add_register(*new_contents,
                                cmd=cmd,
                                contextualize=False,
                                n=self.n,
                                replace=True)
+        env = env.consume_budget(cmd.budget_consumed)
         return None, env, cmd
 
     def command_for_raise(self):
@@ -455,22 +483,27 @@ class Resume(Command):
 
     def budget_consumed_for_more(self):
         result = self.budget_consumed
-        if self.previous is not None:
-            result += self.previous.budget_consumed_for_more()
+        if self.register is not None:
+            result += self.register.cmd.budget_consumed_for_more()
         return result
 
 
 class More(Command):
 
-    command_args = ["n", "result_cmd", "nominal_budget", "question"]
-    def __init__(self, n, result_cmd=None, nominal_budget=None, question=None, **kwargs):
+    command_args = ["n", "result_cmd", "nominal_budget", "question", "register"
+                    ]
+    def __init__(self, n, result_cmd=None, nominal_budget=None, question=None,
+            register=None, **kwargs):
         super().__init__(**kwargs)
         self.n = n
         self.result_cmd = result_cmd
         self.nominal_budget = nominal_budget
         self.question = question
+        self.register = register
 
-    def execute(self, env, budget):
+    def execute(self):
+        env = self.state
+        budget = env.budget
         try:
             register = env.registers[self.n]
         except IndexError:
@@ -486,65 +519,68 @@ class More(Command):
             raise BadCommand("can only get more from interrupted questions")
         if result_cmd.exhausted:
             more_budget *= 10
+        more_cmd = self.copy(nominal_budget=more_budget,
+                             question=more_question,
+                             register=register)
+        old_budget_consumed = register.cmd.budget_consumed_for_more()
         new_env = result_cmd.state
         new_head = new_env.make_head(more_question, more_budget).copy(
             fields=new_env.registers[0].contents[0].fields)
         new_first_register = (new_head, ) + new_env.registers[0].contents[1:]
-        new_env = new_env.add_register(*
-                                       new_first_register,
-                                       cmd=self,
+        new_env = new_env.add_register(*new_first_register,
+                                       cmd=more_cmd,
                                        replace=True,
                                        n=0,
-                                       contextualize=False).copy(
-                                           parent_cmd=self)
-        budget = min(budget, more_budget)
-        budget_consumed = 0
-        previous_cmd = None
+                                       contextualize=False)
+        new_env = new_env.copy(
+            parent_cmd=more_cmd,
+            budget=budget,
+            initial_nominal_budget=more_budget,
+            nominal_budget=more_budget - old_budget_consumed,
+            budget_consumed=0)
         if (hasattr(result_cmd.previous, "result_cmd") and
                 isinstance(result_cmd.previous.result_cmd, Interrupted)):
-            if ((not result_cmd.previous.result_cmd.exhausted and
-                 not result_cmd.exhausted) or
+            if (not result_cmd.previous.result_cmd.exhausted or
                     isinstance(new_env, main.Translator)):
                 if isinstance(result_cmd.previous, Ask):
                     new_n = len(new_env.registers) - 1
-                elif isinstance(result_cmd.previous, More) or isinstance(
-                        result_cmd.previous, Resume):
+                elif (isinstance(result_cmd.previous, More) or
+                      isinstance(result_cmd.previous, Resume)):
                     new_n = result_cmd.previous.n
                 else:
-                    raise ValueError(
-                        "didn't know that this could be interrupted")
+                    raise ValueError("can't interrupt this")
                 recursive_cmd_string = "<<recursively applied more {}>>".format(
                     new_n)
-                recursive_more_cmd = self.copy(n=new_n,
-                                               state=new_env,
-                                               string=recursive_cmd_string)
-                _, new_env, recursive_more_cmd = recursive_more_cmd.execute(
-                    new_env, budget)
-                previous_cmd = recursive_more_cmd
-                budget_consumed += recursive_more_cmd.budget_consumed
-        result, more_result_cmd, step_budget_consumed = main.run_machine(
-            new_env,
-            nominal_budget=more_budget - budget_consumed,
-            budget=budget - budget_consumed,
-            previous_cmd=previous_cmd)
-        budget_consumed += step_budget_consumed
+                recursive_more_cmd = More(n=new_n,
+                                          state=new_env,
+                                          string=recursive_cmd_string)
+                return recursive_more_cmd.execute()
+        return None, new_env, more_cmd
+
+    def finish(self, result, result_cmd, sub_budget_consumed):
+        env = self.state
+        budget_consumed = self.budget_consumed + sub_budget_consumed
         result, env = env.contextualize(result)
-        addressed_answer = Message('A: ') + result
-        more_cmd = self.copy(nominal_budget=more_budget,
-                             question=more_question,
-                             result_cmd=more_result_cmd,
-                             budget_consumed=budget_consumed)
-        new_addressed_q = env.render_question(more_question, more_budget)
-        new_contents = (new_addressed_q, ) + register.contents[1:-1] + (
-            addressed_answer, )
+        answer = Message('A: ') + result
+        cmd = self.copy(result_cmd=result_cmd, budget_consumed=budget_consumed)
+        new_question = env.render_question(self.question, self.nominal_budget)
+        new_contents = (new_question, ) + self.register.contents[1:-1] + (
+            answer, )
         env = env.add_register(*new_contents,
-                cmd=more_cmd, replace=True, n = self.n, contextualize=False)
-        return None, env, more_cmd
+                cmd=cmd, replace=True, n = self.n, contextualize=False)
+        env = env.consume_budget(cmd.budget_consumed)
+        return None, env, cmd
 
     def command_for_raise(self):
         if self.result_cmd is not None:
             return self.result_cmd
         return self
+
+    def budget_consumed_for_more(self):
+        result = self.budget_consumed
+        if self.register is not None:
+            result += self.register.cmd.budget_consumed_for_more()
+        return result
 
     #----parsing
 
