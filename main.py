@@ -395,8 +395,9 @@ def get_response(env,
     obs = "\n".join(lines)
     context = env.context
     suggester = context.suggesters[kind]
-    response = suggester.get_cached_response(obs) if (
-        use_cache and not replace_old) else None
+    if replace_old:
+        suggester.delete_cached_response(obs)
+    response = suggester.get_cached_response(obs) if use_cache else None
     if response is None:
         t = context.terminal
         t.clear()
