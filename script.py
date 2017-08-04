@@ -14,7 +14,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        message, src, budget_consumed = main()
+        message, state, src = main()
         import IPython
         from worlds import display_history
         IPython.embed()

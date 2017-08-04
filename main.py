@@ -74,7 +74,8 @@ class RegisterMachine(utils.Copyable):
         return Translator
 
     arg_names = ["registers", "context", "args", "use_cache", "nominal_budget",
-                 "budget", "budget_consumed", "parent_cmd", "initial_nominal_budget"]
+                 "budget", "budget_consumed", "parent_cmd",
+                 "initial_nominal_budget"]
 
     def __init__(self,
                  registers=(),
@@ -100,22 +101,27 @@ class RegisterMachine(utils.Copyable):
         self.parent_cmd = parent_cmd
 
     def __str__(self):
-        return '\n'.join(self.get_lines())
+        result = []
+        for i, r in enumerate(self.registers):
+            prefix = "{}. ".format(i)
+            for m in r.contents:
+                result.append("{}{}".format(prefix, m))
+                prefix = " " * len(prefix)
+            result.append("")
+        return '\n'.join(result)
 
     def dump_and_print(self, message=""):
         if self.context.terminal.closed:
-            for line in self.get_lines():
-                print(line)
+            print(str(self))
             print(message)
         else:
             self.context.terminal.clear()
-            for line in self.get_lines():
-                self.context.terminal.print_line(line)
+            self.context.terminal.print_line(str(self))
             self.context.terminal.print_line(message)
             term.get_input(self.context.terminal)
 
     def consume_budget(self, k):
-        return self.copy(budget_consumed = self.budget_consumed + k)
+        return self.copy(budget_consumed=self.budget_consumed + k)
 
     def contextualize(self, m):
         """
@@ -188,19 +194,6 @@ class RegisterMachine(utils.Copyable):
         return self.copy(
             registers=self.registers[:n] + self.registers[n + 1:]).pack_args()
 
-    def get_lines(self):
-        """
-        Get a sequence of lines that represent the current state of the register machine.
-        """
-        result = []
-        for i, r in enumerate(self.registers):
-            prefix = "{}. ".format(i)
-            for m in r.contents:
-                result.append("{}{}".format(prefix, m))
-                prefix = " " * len(prefix)
-            result.append("")
-        return result
-
     def replace_arg(self, n, new_m, cmd=None):
         """
         Replace each pointer to argument n with new_m, then remove argument n
@@ -260,7 +253,8 @@ class RegisterMachine(utils.Copyable):
                          initial_nominal_budget=initial_nominal_budget,
                          parent_cmd=cmd,
                          **kwargs)
-        return env.add_register(env.make_head(Q, initial_nominal_budget), cmd=cmd)
+        return env.add_register(env.make_head(Q, initial_nominal_budget),
+                                cmd=cmd)
 
     def make_head(self, Q, nominal_budget=float('inf')):
         """
@@ -334,14 +328,15 @@ class Context(object):
     Generally one is created at the entry point and then passed
     on recursively to all child environments.
     """
+    supports_pre_suggestions = True
 
     def __init__(self):
         self.terminal = term.Terminal()
 
     def __enter__(self):
         self.suggesters = {
-            "implement": suggestions.ImplementSuggester(),
-            "translate": suggestions.TranslateSuggester()
+            "implement": suggestions.Suggester("implement"),
+            "translate": suggestions.Suggester("translate")
         }
         self.terminal.__enter__()
         return self
@@ -350,6 +345,17 @@ class Context(object):
         for v in self.suggesters.values():
             v.close()
         self.terminal.__exit__(*args)
+
+    def delete_cached_response(self, obs):
+        pass
+
+    def get_response(self, env, obs, error_message=None, **kwargs):
+        self.terminal.clear()
+        self.terminal.print_line(obs)
+        if error_message is not None:
+            self.terminal.print_line(error_message)
+            self.terminal.print_line("")
+        return term.get_input(self.terminal, **kwargs)
 
 
 class ChangedContinuationError(Exception):
@@ -391,34 +397,33 @@ def get_response(env,
                  make_pre_suggestions=lambda: []):
     if error_message is not None:
         replace_old = True
-    lines = env.get_lines()
-    obs = "\n".join(lines)
+    obs = str(env)
     context = env.context
     suggester = context.suggesters[kind]
     if replace_old:
         suggester.delete_cached_response(obs)
+        context.delete_cached_response(obs)
     response = suggester.get_cached_response(obs) if use_cache else None
     if response is None:
-        t = context.terminal
-        t.clear()
-        for line in lines:
-            t.print_line(line)
         if use_cache:
             hints, shortcuts = suggester.make_suggestions_and_shortcuts(env,
                                                                         obs)
         else:
             hints, shortcuts = [], []
-        if default is None:
-            default = ""
-        if error_message is not None:
-            t.print_line(error_message)
-            t.print_line("")
-        response = term.get_input(t,
-                                  suggestions=hints,
-                                  shortcuts=shortcuts,
-                                  prompt=prompt,
-                                  default=default,
-                                  pre_suggestions=make_pre_suggestions())
+        pre_suggestions = make_pre_suggestions()
+        if (not context.supports_pre_suggestions and use_cache and
+                isinstance(env, Translator)):
+            hints = [h for h in hints if h != pre_suggestions[-1]]
+            hints = [pre_suggestions[-1]] + hints
+        if default is None: default = ""
+        response = context.get_response(env,
+                                        obs,
+                                        prompt=prompt,
+                                        pre_suggestions=pre_suggestions,
+                                        error_message=error_message,
+                                        default=default,
+                                        suggestions=hints,
+                                        shortcuts=shortcuts)
         if use_cache:
             suggester.set_cached_response(obs, response)
     return response
@@ -441,13 +446,15 @@ def run_machine(state):
             retval = command.make_message()
         if retval is not None:
             if state.parent_cmd is None:
-                return retval, command, state.budget_consumed
-            retval, state, command = state.parent_cmd.finish(retval, command,
-                                                         state.budget_consumed)
+                return retval, state, command
+            retval, state, command = state.parent_cmd.finish(
+                retval, command, state.budget_consumed)
         else:
+
             def make_pre_suggestions():
                 pre_suggestions = state.pre_suggestions()
-                if error_cmd is not None: pre_suggestions.append(error_cmd.string)
+                if error_cmd is not None:
+                    pre_suggestions.append(error_cmd.string)
                 return pre_suggestions
 
             if error is None:
@@ -465,7 +472,7 @@ def run_machine(state):
                              make_pre_suggestions=make_pre_suggestions)
             command = commands.parse_command(s)
             command = command.copy(string=s, state=state)
-            if fixing_cmd is not None and s == fixing_cmd.string:
+            if fixing_cmd is not None and s == error_cmd.string:
                 error = "nothing was fixed"
                 error_cmd = fixing_cmd
                 state = fixing_cmd.state

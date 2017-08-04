@@ -316,7 +316,7 @@ class Assert(Command):
         if (result.matches("T") or result.matches("t") or
                 result.matches("True") or result.matches("true")):
             asserted = Message("Checked: ") + self.assertion
-            new_contents = self.register.contents + (asserted,)
+            new_contents = self.register.contents + (asserted, )
             env = env.add_register(*new_contents,
                                    contextualize=False,
                                    cmd=cmd,

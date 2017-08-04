@@ -35,17 +35,20 @@ def best_dict_values(query, d, deduplicate=True, n=5, filter=lambda x: True):
 
 
 class Suggester(object):
-    def __init__(self, table):
+    def __init__(self, table, num_suggestions=5, num_shortcuts=5):
         self.db = sqlite3.connect("memoize.db")
         self.table = table
         self.cursor = self.db.cursor()
         self.cache = self.load_cache()
+        self.num_suggestions = num_suggestions
+        self.num_shortcuts = num_shortcuts
 
     def load_cache(self):
         self.cursor.execute("SELECT * FROM {}".format(self.table))
         return {obs: resp for obs, resp in self.cursor}
 
     def delete_cached_response(self, obs):
+        if obs in self.cache: del self.cache[obs]
         self.cursor.execute(
             "DELETE FROM {} WHERE input = ?".format(self.table), (obs, ))
         self.db.commit()
@@ -68,8 +71,12 @@ class Suggester(object):
     def make_suggestions_and_shortcuts(self,
                                        env,
                                        obs,
-                                       num_suggestions=5,
-                                       num_shortcuts=5):
+                                       num_suggestions=None,
+                                       num_shortcuts=None):
+        if num_suggestions is None:
+            num_suggestions = self.num_suggestions
+        if num_shortcuts is None:
+            num_shortcuts = self.num_shortcuts
         cache = self.cache
         shortcuts = []
 
@@ -101,7 +108,7 @@ class Suggester(object):
             except messages.BadInstantiation:
                 return False
 
-        suggestions = best_dict_values(obs, cache, filter=useful_suggestion)
+        suggestions = best_dict_values(obs, cache, filter=useful_suggestion, n=num_suggestions)
         for h in suggestions:
             c = commands.parse_command(h)
             m = commands.parse_message(h)
@@ -113,16 +120,6 @@ class Suggester(object):
                 for sub_m in messages.submessages(m, include_root=True):
                     add_shortcut(sub_m)
         return suggestions, shortcuts
-
-
-class ImplementSuggester(Suggester):
-    def __init__(self):
-        super().__init__("implement")
-
-
-class TranslateSuggester(Suggester):
-    def __init__(self):
-        super().__init__("translate")
 
 
 def init_database():
