@@ -5,6 +5,7 @@ import messages
 import commands
 import term
 import suggestions
+import os
 from copy import copy
 from math import log
 
@@ -355,7 +356,7 @@ class Context(object):
         if error_message is not None:
             self.terminal.print_line(error_message)
             self.terminal.print_line("")
-        return term.get_input(self.terminal, **kwargs)
+        return term.get_input(self.terminal, **kwargs), "local:{}".format(os.getenv("USER"))
 
 
 class ChangedContinuationError(Exception):
@@ -416,16 +417,16 @@ def get_response(env,
             hints = [h for h in hints if h != pre_suggestions[-1]]
             hints = [pre_suggestions[-1]] + hints
         if default is None: default = ""
-        response = context.get_response(env,
-                                        obs,
-                                        prompt=prompt,
-                                        pre_suggestions=pre_suggestions,
-                                        error_message=error_message,
-                                        default=default,
-                                        suggestions=hints,
-                                        shortcuts=shortcuts)
+        response, src = context.get_response(env,
+                                             obs,
+                                             prompt=prompt,
+                                             pre_suggestions=pre_suggestions,
+                                             error_message=error_message,
+                                             default=default,
+                                             suggestions=hints,
+                                             shortcuts=shortcuts)
         if use_cache:
-            suggester.set_cached_response(obs, response)
+            suggester.set_cached_response(obs, response, src)
     return response
 
 

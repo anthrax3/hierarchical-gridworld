@@ -35,22 +35,24 @@ def best_dict_values(query, d, deduplicate=True, n=5, filter=lambda x: True):
 
 
 class Suggester(object):
-    def __init__(self, table, num_suggestions=5, num_shortcuts=5):
+    def __init__(self, kind, num_suggestions=5, num_shortcuts=5):
         self.db = sqlite3.connect("memoize.db")
-        self.table = table
+        self.kind = kind
         self.cursor = self.db.cursor()
         self.cache = self.load_cache()
         self.num_suggestions = num_suggestions
         self.num_shortcuts = num_shortcuts
 
     def load_cache(self):
-        self.cursor.execute("SELECT * FROM {}".format(self.table))
-        return {obs: resp for obs, resp in self.cursor}
+        self.cursor.execute("SELECT * FROM responses WHERE kind = ?",
+                            (self.kind, ))
+        return {obs: resp for obs, resp, source, kind in self.cursor}
 
     def delete_cached_response(self, obs):
         if obs in self.cache: del self.cache[obs]
         self.cursor.execute(
-            "DELETE FROM {} WHERE input = ?".format(self.table), (obs, ))
+            "DELETE FROM responses WHERE input = ? AND kind = ?",
+            (obs, self.kind))
         self.db.commit()
 
     def get_cached_response(self, obs):
@@ -59,10 +61,10 @@ class Suggester(object):
         else:
             return None
 
-    def set_cached_response(self, obs, response):
+    def set_cached_response(self, obs, response, src):
         self.cache[obs] = response
-        self.cursor.execute("INSERT INTO {} VALUES (?, ?)".format(self.table),
-                            (obs, response))
+        self.cursor.execute("INSERT INTO responses VALUES (?, ?, ?, ?)",
+                            (obs, response, src, self.kind))
         self.db.commit()
 
     def close(self):
@@ -108,7 +110,10 @@ class Suggester(object):
             except messages.BadInstantiation:
                 return False
 
-        suggestions = best_dict_values(obs, cache, filter=useful_suggestion, n=num_suggestions)
+        suggestions = best_dict_values(obs,
+                                       cache,
+                                       filter=useful_suggestion,
+                                       n=num_suggestions)
         for h in suggestions:
             c = commands.parse_command(h)
             m = commands.parse_message(h)
@@ -125,8 +130,8 @@ class Suggester(object):
 def init_database():
     with closing(sqlite3.connect("memoize.db")) as conn:
         c = conn.cursor()
-        c.execute("CREATE TABLE implement (input varchar, output varchar)")
-        c.execute("CREATE TABLE translate (input varchar, output varchar)")
+        c.execute(
+            "CREATE TABLE responses (input varchar, output varchar, source varchar, kind varchar)")
         conn.commit()
 
 

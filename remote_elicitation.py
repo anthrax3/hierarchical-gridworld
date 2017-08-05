@@ -48,7 +48,7 @@ class ServerContext(object):
         for f in Feedback.objects.filter(responded_at__gt=self.last_time,
                                          experiment_name=self.experiment_name):
             self.last_time = max(self.last_time, f.responded_at)
-            self.results[f.dialog_context] = f.response
+            self.results[f.dialog_context] = (f.response, f.rater)
             new_results.add(f.dialog_context)
             #obs may not be in queried if it was pending when self was created
             if f.dialog_context in self.queried:
@@ -57,7 +57,8 @@ class ServerContext(object):
 
     def get_response(self, env, obs, suggestions=[], **kwargs):
         if obs in self.results:
-            return self.results[obs]
+            response, rater = self.results[obs]
+            return response, "remote:{}".format(rater)
         if obs not in self.queried:
             print("querying server")
             print(obs)
@@ -93,11 +94,11 @@ def run_many_machines():
         waiting = defaultdict(list)
         results = []
         machines = []
-        active_machiens = 15
+        active_machines = 15
         try:
             while True:
-                while (len(machines) +
-                        sum(len(v) for v in waiting.values())) < 15:
+                while (len(machines) + sum(len(v) for v in waiting.values()) <
+                       active_machines):
                     machines.append(default_machine(context))
                 if machines:
                     machine = machines.pop()
