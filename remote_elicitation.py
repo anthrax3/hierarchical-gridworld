@@ -90,11 +90,15 @@ def default_machine(context):
 
 def run_many_machines():
     with ServerContext() as context:
-        machines = [default_machine(context) for _ in range(10)]
         waiting = defaultdict(list)
         results = []
+        machines = []
+        active_machiens = 15
         try:
             while True:
+                while (len(machines) +
+                        sum(len(v) for v in waiting.values())) < 15:
+                    machines.append(default_machine(context))
                 if machines:
                     machine = machines.pop()
                     try:
