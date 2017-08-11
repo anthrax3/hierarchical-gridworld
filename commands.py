@@ -676,7 +676,7 @@ replace_command = (raw("replace")) + w + number + pp.ZeroOrMore(pp.Optional(
     w + raw("and")) + w + number) + pp.Optional(w + raw("with")) + w + message
 replace_command.setParseAction(lambda xs: Replace(xs[:-1], xs[-1]))
 
-say_command = (raw("say") | raw("state")) + w + message
+say_command = (raw("note")) + w + message
 say_command.setParseAction(lambda xs: Say(xs[0]))
 
 view_command = raw("view") + w + number
