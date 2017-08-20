@@ -288,9 +288,9 @@ class RegisterMachine(utils.Copyable):
             for m in register.contents:
                 s = str(messages.strip_prefix(m))
                 if utils.starts_with("A", m.text[0]):
-                    result.append("A: " + s)
+                    result.append("reply " + s)
                 elif utils.starts_with("Q", m.text[0]):
-                    result.append("Q: " + s)
+                    result.append("ask " + s)
         return result
 
 
