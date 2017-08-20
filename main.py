@@ -288,9 +288,9 @@ class RegisterMachine(utils.Copyable):
             for m in register.contents:
                 s = str(messages.strip_prefix(m))
                 if utils.starts_with("A", m.text[0]):
-                    result.append("A: " + s)
+                    result.append("reply " + s)
                 elif utils.starts_with("Q", m.text[0]):
-                    result.append("Q: " + s)
+                    result.append("ask " + s)
         return result
 
 
@@ -331,8 +331,9 @@ class Context(object):
     """
     supports_pre_suggestions = True
 
-    def __init__(self):
+    def __init__(self, is_sandbox=False):
         self.terminal = term.Terminal()
+        self.is_sandbox = is_sandbox
 
     def __enter__(self):
         self.suggesters = {
@@ -398,19 +399,18 @@ def get_response(env,
                  make_pre_suggestions=lambda: []):
     if error_message is not None:
         replace_old = True
-    obs = str(env)
     context = env.context
+    if context.is_sandbox:
+        use_cache = False
+        replace_old = False
+    obs = str(env)
     suggester = context.suggesters[kind]
     if replace_old:
         suggester.delete_cached_response(obs)
         context.delete_cached_response(obs)
     response = suggester.get_cached_response(obs) if use_cache else None
     if response is None:
-        if use_cache:
-            hints, shortcuts = suggester.make_suggestions_and_shortcuts(env,
-                                                                        obs)
-        else:
-            hints, shortcuts = [], []
+        hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
         pre_suggestions = make_pre_suggestions()
         if (not context.supports_pre_suggestions and use_cache and
                 isinstance(env, Translator)):
