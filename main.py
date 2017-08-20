@@ -331,8 +331,9 @@ class Context(object):
     """
     supports_pre_suggestions = True
 
-    def __init__(self):
+    def __init__(self, is_sandbox=False):
         self.terminal = term.Terminal()
+        self.is_sandbox = is_sandbox
 
     def __enter__(self):
         self.suggesters = {
@@ -398,8 +399,11 @@ def get_response(env,
                  make_pre_suggestions=lambda: []):
     if error_message is not None:
         replace_old = True
-    obs = str(env)
     context = env.context
+    if context.is_sandbox:
+        use_cache = False
+        replace_old = False
+    obs = str(env)
     suggester = context.suggesters[kind]
     if replace_old:
         suggester.delete_cached_response(obs)

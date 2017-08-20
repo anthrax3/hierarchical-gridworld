@@ -16,11 +16,12 @@ class ServerContext(object):
 
     supports_pre_suggestions = False
 
-    def __init__(self, experiment_name="gridworld-test"):
+    def __init__(self, experiment_name="gridworld-test", is_sandbox=False):
         self.experiment_name = experiment_name
         self.queried = set()
         self.last_time = now()
         self.results = {}
+        self.is_sandbox = is_sandbox
         fs = Feedback.objects.filter(responded_at__isnull=True,
                                      experiment_name=self.experiment_name)
         fs.update(canceled_at=now())
