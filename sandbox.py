@@ -11,9 +11,11 @@ def default_machine(context):
     machine = main.RegisterMachine(context=context, nominal_budget=budget)
     return machine.add_register(Q)
 
+#XXX this is very hacky
 def run_sandboxes():
+    active_machines = 10
     try:
-        contexts = [ServerContext("sandbox-{}".format(i), is_sandbox=True) for i in range(1)]
+        contexts = [ServerContext("sandbox-{}".format(i), is_sandbox=True) for i in range(active_machines)]
         for context in contexts:
             context.__enter__()
         machines = [default_machine(context) for context in contexts]
@@ -24,12 +26,15 @@ def run_sandboxes():
                 machine = machines.pop()
                 try:
                     results.append(main.run_machine(machine))
+                    machine.context.results = {}
+                    machines.append(default_machine(machine.context))
                 except WaitingOnServer as e:
                     waiting[e.obs].append(e.env)
             elif waiting:
-                for obs in context.sweep():
-                    machines.extend(waiting[obs])
-                    del waiting[obs]
+                for context in contexts:
+                    for obs in context.sweep():
+                        machines.extend(waiting[obs])
+                        del waiting[obs]
             else:
                 return results
     finally:

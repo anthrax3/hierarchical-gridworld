@@ -410,11 +410,7 @@ def get_response(env,
         context.delete_cached_response(obs)
     response = suggester.get_cached_response(obs) if use_cache else None
     if response is None:
-        if use_cache:
-            hints, shortcuts = suggester.make_suggestions_and_shortcuts(env,
-                                                                        obs)
-        else:
-            hints, shortcuts = [], []
+        hints, shortcuts = suggester.make_suggestions_and_shortcuts(env, obs)
         pre_suggestions = make_pre_suggestions()
         if (not context.supports_pre_suggestions and use_cache and
                 isinstance(env, Translator)):
