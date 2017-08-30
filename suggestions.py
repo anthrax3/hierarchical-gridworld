@@ -127,14 +127,6 @@ class Suggester(object):
         return suggestions, shortcuts
 
 
-def init_database():
-    with closing(sqlite3.connect("memoize.db")) as conn:
-        c = conn.cursor()
-        c.execute(
-            "CREATE TABLE responses (input varchar, output varchar, source varchar, kind varchar)")
-        conn.commit()
-
-
 def get_database_size():
     with closing(sqlite3.connect("memoize.db")) as conn:
         c = conn.cursor()
